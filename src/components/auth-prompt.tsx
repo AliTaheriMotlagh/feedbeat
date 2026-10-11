@@ -4,16 +4,23 @@ import { Dialog } from "radix-ui";
 import { X as Close } from "lucide-react";
 import { createContext, useCallback, useContext, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { signInWithX } from "@/lib/auth-client";
+import type { LoginProvider } from "@/env";
+import { signInWith } from "@/lib/auth-client";
 import { LogoMark } from "./logo";
-import { XIcon } from "./platform-icon";
+import { BrandIcon } from "./platform-icon";
+
+const LABELS: Record<LoginProvider, { label: string; brand: "github" | "google" | "x" }> = {
+  github: { label: "Continue with GitHub", brand: "github" },
+  google: { label: "Continue with Google", brand: "google" },
+  twitter: { label: "Continue with X", brand: "x" },
+};
 
 const Ctx = createContext<(message?: string) => void>(() => {});
 
 export const useAuthPrompt = () => useContext(Ctx);
 
 /** App-wide "sign in to continue" dialog, opened from any gated interaction. */
-export function AuthPromptProvider({ children, enabled }: { children: React.ReactNode; enabled: boolean }) {
+export function AuthPromptProvider({ children, providers }: { children: React.ReactNode; providers: LoginProvider[] }) {
   const [open, setOpen] = useState(false);
   const [message, setMessage] = useState<string>();
 
@@ -42,10 +49,20 @@ export function AuthPromptProvider({ children, enabled }: { children: React.Reac
               <li>🔥 Daily streaks & collectible badges</li>
               <li>🎧 A personal feed of new finds</li>
             </ul>
-            {enabled ? (
-              <Button className="mt-6 w-full" size="lg" onClick={() => signInWithX(window.location.pathname + window.location.search)}>
-                <XIcon /> Continue with X
-              </Button>
+            {providers.length ? (
+              <div className="mt-6 space-y-2">
+                {providers.map((p, i) => (
+                  <Button
+                    key={p}
+                    className="w-full"
+                    size="lg"
+                    variant={i === 0 ? "default" : "outline"}
+                    onClick={() => signInWith(p, window.location.pathname + window.location.search)}
+                  >
+                    <BrandIcon brand={LABELS[p].brand} /> {LABELS[p].label}
+                  </Button>
+                ))}
+              </div>
             ) : (
               <p className="mt-6 rounded-xl bg-muted p-3 text-xs text-muted-foreground">Sign-in isn&apos;t configured on this deployment yet.</p>
             )}

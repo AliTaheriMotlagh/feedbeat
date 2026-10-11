@@ -10,7 +10,8 @@ import { JsonLd } from "@/components/json-ld";
 import { LevelPill } from "@/components/level-pill";
 import { PlatformIcon, XIcon } from "@/components/platform-icon";
 import { RefreshButton } from "@/components/refresh-button";
-import { ScanForm } from "@/components/scan-form";
+import { StartCta } from "@/components/start-cta";
+import { features } from "@/env";
 import { ScanStatus } from "@/components/scan-status";
 import { ShareButtons } from "@/components/share-button";
 import { TimeAgo } from "@/components/time-ago";
@@ -75,7 +76,7 @@ async function ProfileContent({ params }: Pick<PageProps<"/u/[handle]">, "params
   ]);
 
   const scanning = profile.status === "queued" || profile.status === "scanning";
-  const canRefresh = !scanning && canRescan(profile.lastScannedAt);
+  const canRefresh = features.scanning && profile.source === "x_api" && !scanning && canRescan(profile.lastScannedAt);
   const name = profile.name ?? `@${profile.displayHandle}`;
   const url = absoluteUrl(`/u/${profile.handle}`);
 
@@ -105,9 +106,22 @@ async function ProfileContent({ params }: Pick<PageProps<"/u/[handle]">, "params
             <Stat label={`followers on ${site.name}`} value={profile.followerCount} />
           </dl>
 
+          {profile.source === "archive" && (
+            <p className="mt-4 mr-2 inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-sm">
+              {profile.ownerVerified ? (
+                <>
+                  <BadgeCheck className="size-4 text-emerald-500" /> Published by the account owner
+                </>
+              ) : (
+                <>
+                  <span aria-hidden>📦</span> From an X archive
+                </>
+              )}
+            </p>
+          )}
           {discoveredBy?.id && (
             <p className="mt-4 inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-sm">
-              <span aria-hidden>🧭</span> Discovered by
+              <span aria-hidden>🧭</span> {profile.source === "archive" ? "Uploaded by" : "Discovered by"}
               {discoveredBy.username ? (
                 <Link href={`/c/${discoveredBy.username}`} className="font-semibold hover:underline">
                   {discoveredBy.name}
@@ -123,6 +137,11 @@ async function ProfileContent({ params }: Pick<PageProps<"/u/[handle]">, "params
             <FollowButton profileId={profile.id} following={following} handle={profile.displayHandle} />
             <ShareButtons url={url} text={`Every song @${profile.displayHandle} has shared, as playlists 🎧`} />
             {canRefresh && <RefreshButton handle={profile.handle} label="Check for new songs" />}
+            {profile.source === "archive" && session?.user.id === profile.discoveredById && (
+              <Link href="/import" className="text-sm font-medium text-primary hover:underline">
+                Update from a newer archive
+              </Link>
+            )}
           </div>
           {profile.lastScannedAt && !scanning && (
             <p className="mt-3 text-xs text-muted-foreground">
@@ -291,9 +310,13 @@ function NotMapped({ handle }: { handle: string }) {
       <p className="text-5xl" aria-hidden>
         🎧
       </p>
-      <h1 className="mt-4 font-display text-3xl font-bold">@{handle} hasn&apos;t been mapped yet</h1>
-      <p className="mt-2 text-muted-foreground">Be the first to discover their music — and earn the Pioneer credit.</p>
-      <ScanForm size="sm" className="mt-8" defaultHandle={handle} />
+      <h1 className="mt-4 font-display text-3xl font-bold">@{handle} isn&apos;t on {site.name} yet</h1>
+      <p className="mt-2 text-muted-foreground">
+        {features.scanning
+          ? "Be the first to discover their music — and earn the Pioneer credit."
+          : "If this is your account, import your X archive to publish your playlists."}
+      </p>
+      <StartCta size="sm" className="mt-8" defaultHandle={handle} />
     </div>
   );
 }

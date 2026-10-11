@@ -5,6 +5,6 @@ export const authClient = createAuthClient();
 
 export const { useSession, signOut } = authClient;
 
-export function signInWithX(callbackURL = "/") {
-  return authClient.signIn.social({ provider: "twitter", callbackURL });
+export function signInWith(provider: "github" | "google" | "twitter", callbackURL = "/") {
+  return authClient.signIn.social({ provider, callbackURL });
 }

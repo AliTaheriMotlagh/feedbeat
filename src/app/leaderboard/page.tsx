@@ -36,7 +36,7 @@ export default function LeaderboardPage({ searchParams }: PageProps<"/leaderboar
           <h2 className="font-semibold">How to earn XP</h2>
           <ul className="mt-3 space-y-2 text-sm">
             {[
-              ["Discover a new profile", `+${XP.discover} (+1/song, up to ${XP.discoverTrackCap})`],
+              ["Publish a new profile", `+${XP.discover} (+1/song, up to ${XP.discoverTrackCap})`],
               ["Your discovery gets a like", `+${XP.likeReceived}`],
               ["Daily visit", `+${XP.dailyVisit}`],
               ["Share a playlist", `+${XP.share}`],

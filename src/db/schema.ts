@@ -90,6 +90,8 @@ export const verification = pgTable("verification", {
 
 export const platformEnum = pgEnum("platform", PLATFORM_IDS);
 export const scanStatusEnum = pgEnum("scan_status", ["queued", "scanning", "ready", "error"]);
+/** Where a profile's data came from: the (paid) X API, or a user-uploaded X archive. */
+export const profileSourceEnum = pgEnum("profile_source", ["x_api", "archive"]);
 
 /** An X account whose timeline has been turned into playlists. */
 export const profiles = pgTable(
@@ -105,6 +107,9 @@ export const profiles = pgTable(
     bio: text("bio"),
     followersCount: integer("followers_count").notNull().default(0),
     verified: boolean("verified").notNull().default(false),
+    source: profileSourceEnum("source").notNull().default("x_api"),
+    /** Archive imports: true when the uploader proved they own the X account (signed in with X). */
+    ownerVerified: boolean("owner_verified").notNull().default(false),
     status: scanStatusEnum("status").notNull().default("queued"),
     statusMessage: text("status_message"),
     newestTweetId: text("newest_tweet_id"),

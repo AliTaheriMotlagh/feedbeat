@@ -2,7 +2,8 @@ import { z } from "zod";
 
 /**
  * Typed, validated environment. Optional integrations degrade gracefully:
- * - no X_BEARER_TOKEN  → scanning uses demo data in development, disabled in production
+ * - no X_BEARER_TOKEN  → handle scanning uses demo data in development, disabled in production
+ *                         (X archive import works everywhere and is free)
  * - no SPOTIFY_*       → "Export to Spotify" is hidden
  * - no Upstash/KV      → in-memory rate limiting (per instance)
  */
@@ -16,6 +17,12 @@ const schema = z.object({
   X_CLIENT_ID: z.string().optional(),
   X_CLIENT_SECRET: z.string().optional(),
   X_BEARER_TOKEN: z.string().optional(),
+
+  // Free sign-in options
+  GITHUB_CLIENT_ID: z.string().optional(),
+  GITHUB_CLIENT_SECRET: z.string().optional(),
+  GOOGLE_CLIENT_ID: z.string().optional(),
+  GOOGLE_CLIENT_SECRET: z.string().optional(),
 
   SPOTIFY_CLIENT_ID: z.string().optional(),
   SPOTIFY_CLIENT_SECRET: z.string().optional(),
@@ -44,8 +51,16 @@ export const env = parsed.data;
 /** Demo data is used when explicitly enabled, or in dev without X credentials. */
 export const useDemoTweets = env.DEMO_MODE || (!env.X_BEARER_TOKEN && env.NODE_ENV !== "production");
 
+export type LoginProvider = "github" | "google" | "twitter";
+
+const loginProviders: LoginProvider[] = [];
+if (env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET) loginProviders.push("github");
+if (env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET) loginProviders.push("google");
+if (env.X_CLIENT_ID && env.X_CLIENT_SECRET) loginProviders.push("twitter");
+
 export const features = {
-  xLogin: Boolean(env.X_CLIENT_ID && env.X_CLIENT_SECRET),
+  loginProviders,
+  xLogin: loginProviders.includes("twitter"),
   spotifyExport: Boolean(env.SPOTIFY_CLIENT_ID && env.SPOTIFY_CLIENT_SECRET),
   scanning: Boolean(env.X_BEARER_TOKEN) || useDemoTweets,
 };

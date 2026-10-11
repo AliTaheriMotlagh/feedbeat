@@ -1,4 +1,4 @@
-import { siApplemusic, siBandcamp, siDeezer, siSoundcloud, siSpotify, siTidal, siX, siYoutube } from "simple-icons";
+import { siApplemusic, siBandcamp, siDeezer, siGithub, siGoogle, siSoundcloud, siSpotify, siTidal, siX, siYoutube } from "simple-icons";
 import { PLATFORMS, type PlatformId } from "@/lib/platforms";
 import { cn } from "@/lib/utils";
 
@@ -35,11 +35,17 @@ export function PlatformIcon({ platform, className, colored, title }: IconProps 
   );
 }
 
-export function XIcon({ className, title }: IconProps) {
+const BRANDS = { x: siX, github: siGithub, google: siGoogle };
+
+export function BrandIcon({ brand, className, title }: IconProps & { brand: keyof typeof BRANDS }) {
   return (
     <svg role={title ? "img" : undefined} aria-hidden={title ? undefined : true} viewBox="0 0 24 24" className={cn("size-4", className)} fill="currentColor">
       {title && <title>{title}</title>}
-      <path d={siX.path} />
+      <path d={BRANDS[brand].path} />
     </svg>
   );
+}
+
+export function XIcon(props: IconProps) {
+  return <BrandIcon brand="x" {...props} />;
 }

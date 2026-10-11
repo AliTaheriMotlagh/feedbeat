@@ -5,7 +5,7 @@ import { Suspense } from "react";
 import { PlatformIcon } from "@/components/platform-icon";
 import { PlaylistCard } from "@/components/playlist-card";
 import { ProfileCard } from "@/components/profile-card";
-import { ScanForm } from "@/components/scan-form";
+import { StartCta } from "@/components/start-cta";
 import { Skeleton } from "@/components/ui/skeleton";
 import { isPlatformId, PLATFORM_IDS, PLATFORMS, type PlatformId } from "@/lib/platforms";
 import { cn } from "@/lib/utils";
@@ -161,8 +161,8 @@ async function SearchResults({ q }: { q: string }) {
         </div>
       ) : (
         <div className="mt-6 max-w-xl rounded-3xl border border-dashed border-border p-8">
-          <p className="font-semibold">Not mapped yet. Want to be the first?</p>
-          <ScanForm size="sm" className="mt-4" defaultHandle={q.replace(/^@/, "")} />
+          <p className="font-semibold">Not on the site yet.</p>
+          <StartCta size="sm" className="mt-4" defaultHandle={q.replace(/^@/, "")} />
         </div>
       )}
     </section>
@@ -173,7 +173,7 @@ function Empty() {
   return (
     <div className="rounded-3xl border border-dashed border-border p-12 text-center">
       <p className="font-display text-lg font-semibold">Nothing here yet</p>
-      <p className="mt-1 text-sm text-muted-foreground">Scan a profile from the home page to get things started.</p>
+      <p className="mt-1 text-sm text-muted-foreground">Import your X archive to publish the first playlists.</p>
     </div>
   );
 }

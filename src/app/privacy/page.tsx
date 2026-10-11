@@ -16,11 +16,16 @@ export default function Privacy() {
       <h2>What we collect</h2>
       <ul>
         <li>
-          <strong>Public X data</strong>: for profiles that are scanned we store the public username, display name, avatar, bio, follower
-          count and the music links found in public posts (with the post id, date and text).
+          <strong>X archive imports</strong>: your archive is opened in your browser and never uploaded. We only receive what you publish:
+          your X username, display name, account id, bio, avatar URL and the music links found in your posts (with post id, date and text).
+          We never read your e-mail, phone number, DMs, likes or IP history from the archive.
         </li>
         <li>
-          <strong>Your account</strong>: if you sign in with X we store your name, username, avatar and (if X shares it) e-mail, plus your
+          <strong>Public X data</strong>: on deployments with X API access, for scanned profiles we store the same public fields fetched
+          from X.
+        </li>
+        <li>
+          <strong>Your account</strong>: when you sign in (GitHub, Google or X) we store your name, username, avatar and e-mail, plus your
           likes, follows, comments, XP and badges.
         </li>
         <li>

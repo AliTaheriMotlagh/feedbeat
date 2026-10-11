@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 
 const LINKS = [
   { href: "/explore", label: "Explore" },
+  { href: "/import", label: "Import" },
   { href: "/leaderboard", label: "Leaderboard" },
   { href: "/feed", label: "Feed" },
 ];
@@ -58,7 +59,7 @@ function MobileTabs({ pathname }: { pathname: string }) {
       aria-label="Mobile"
       className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/90 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl md:hidden"
     >
-      <ul className="grid grid-cols-4">
+      <ul className="grid grid-cols-5">
         {tabs.map((t) => {
           const active = t.href === "/" ? pathname === "/" : pathname.startsWith(t.href);
           return (

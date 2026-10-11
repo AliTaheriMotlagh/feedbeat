@@ -4,27 +4,27 @@ import { site } from "@/lib/site";
 export const FAQ_ITEMS = [
   {
     q: `How does ${site.name} find music in a timeline?`,
-    a: `We read an account's recent public posts (up to the latest few thousand) and look for links to Spotify, YouTube, YouTube Music, Apple Music, SoundCloud, Deezer, TIDAL and Bandcamp — including shortened links and reposts. Each link becomes a track in that platform's playlist.`,
+    a: `Download your free X archive and drop it on the Import page. It's read entirely in your browser: we look for links to Spotify, YouTube, YouTube Music, Apple Music, SoundCloud, Deezer, TIDAL and Bandcamp — including shortened links and reposts — and only those links are uploaded. Each link becomes a track in that platform's playlist.`,
   },
   {
     q: "Is it free?",
-    a: `Yes. Browsing, playing and sharing playlists is free. Sign in with X to like, follow, comment, earn XP and save playlists to Spotify.`,
+    a: `Yes, completely. Browsing, playing, importing and sharing are free. Sign in (GitHub or Google) to publish, like, follow, comment, earn XP and save playlists to Spotify.`,
   },
   {
     q: "Can I save a playlist to my own Spotify account?",
     a: `Yes — connect Spotify once and press “Save to Spotify” on any Spotify playlist. For YouTube you can open the whole playlist as a queue with one click, no account needed.`,
   },
   {
-    q: "Does it work with private or protected accounts?",
-    a: `No. We only read public posts. Protected accounts can't be scanned, and anyone can ask us to remove their profile from ${site.name}.`,
+    q: "Is my archive uploaded?",
+    a: `No. The archive is opened locally in your browser. We never see your DMs, e-mail, likes or anything else — only the music links you choose to publish. Anyone can ask us to remove their profile from ${site.name}.`,
   },
   {
     q: "How often are playlists updated?",
-    a: `Anyone can refresh a profile every few hours, and popular profiles are refreshed automatically. Refreshes only fetch new posts, so they're quick.`,
+    a: `Import a newer archive any time — only new songs are added. (Deployments with X API access can also refresh profiles automatically.)`,
   },
   {
     q: "How do XP and levels work?",
-    a: `You earn XP for discovering new profiles (+50, plus a bonus per song found), for likes your discoveries receive, for commenting, sharing and daily visits. XP unlocks levels from Listener to Legend, and milestones unlock badges.`,
+    a: `You earn XP for publishing profiles (+50, plus a bonus per song found), for likes your playlists receive, for commenting, sharing and daily visits. XP unlocks levels from Listener to Legend, and milestones unlock badges.`,
   },
 ];
 

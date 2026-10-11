@@ -9,7 +9,7 @@ import { JsonLd } from "@/components/json-ld";
 import { PlatformIcon } from "@/components/platform-icon";
 import { PlaylistCard } from "@/components/playlist-card";
 import { ProfileCard } from "@/components/profile-card";
-import { ScanForm } from "@/components/scan-form";
+import { StartCta } from "@/components/start-cta";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { BADGES } from "@/lib/gamification";
@@ -83,17 +83,17 @@ function Hero() {
           className="mb-6 inline-flex items-center gap-2 rounded-full border border-border bg-card/70 px-3 py-1 text-xs font-medium text-muted-foreground backdrop-blur transition hover:text-foreground"
         >
           <Sparkles className="size-3.5 text-primary" />
-          Discover a profile first, earn +50 XP
+          Publish a profile first, earn +50 XP
           <ArrowRight className="size-3" />
         </Link>
         <h1 className="font-display text-4xl leading-[1.05] font-extrabold tracking-tight text-balance sm:text-6xl md:text-7xl">
           Every song they ever posted, <span className="text-gradient">one playlist away.</span>
         </h1>
         <p className="mt-6 max-w-2xl text-lg text-pretty text-muted-foreground sm:text-xl">
-          Drop any X username. {site.name} reads their posts, finds every Spotify, YouTube, Apple Music & SoundCloud link, and builds
-          a playlist for each platform — ready to play and share.
+          {site.name} reads X posts, finds every Spotify, YouTube, Apple Music & SoundCloud link, and builds a playlist for each
+          platform — ready to play, follow and share.
         </p>
-        <ScanForm className="mt-10 max-w-xl" />
+        <StartCta className="mt-10 max-w-xl" />
         <Suspense fallback={<StatsRow />}>
           <LiveStats />
         </Suspense>
@@ -144,8 +144,8 @@ function PlatformStrip() {
 
 function HowItWorks() {
   const steps = [
-    { icon: Radar, title: "Paste a handle", body: "Any public X account — a DJ, a critic, your best friend, yourself." },
-    { icon: Sparkles, title: "We dig through the posts", body: "We scan their timeline for music links and identify every track, album and video." },
+    { icon: Radar, title: "Bring your posts", body: "Drop your free X archive (or a handle, where enabled). Your archive is read right in your browser." },
+    { icon: Sparkles, title: "We find the music", body: "Every Spotify, YouTube, Apple Music & SoundCloud link becomes a track, album or video." },
     { icon: Share2, title: "Play, follow & share", body: "Get one playlist per platform. Save it to Spotify, queue it on YouTube, share it anywhere." },
   ];
   return (
@@ -176,7 +176,7 @@ function HowItWorks() {
 
 function Gamification() {
   const perks = [
-    { icon: Radar, title: "Discover first", body: "Be the first to map a profile and it's credited to you forever. +50 XP." },
+    { icon: Radar, title: "Publish first", body: "Bring a profile to the site first and it's credited to you forever. +50 XP." },
     { icon: Heart, title: "Earn from taste", body: "Every like on a playlist you discovered pays you +5 XP." },
     { icon: Flame, title: "Keep the streak", body: "Show up daily for bonus XP. 7 days unlocks On Fire 🔥." },
     { icon: Medal, title: "Collect badges", body: "Pioneer, Goldmine, Tastemaker… there's one for every kind of digger." },
@@ -237,7 +237,7 @@ async function MiniLeaderboard() {
       <div className="rounded-2xl border border-dashed border-border p-8 text-center">
         <Users className="mx-auto size-8 text-muted-foreground" />
         <p className="mt-3 font-medium">The board is wide open.</p>
-        <p className="text-sm text-muted-foreground">Scan a profile now and take the #1 spot.</p>
+        <p className="text-sm text-muted-foreground">Publish a profile now and take the #1 spot.</p>
       </div>
     );
   }
@@ -309,7 +309,7 @@ function EmptyState({ compact }: { compact?: boolean }) {
   return (
     <div className={`rounded-3xl border border-dashed border-border text-center ${compact ? "p-8" : "p-14"}`}>
       <p className="font-display text-lg font-semibold">Nothing here yet — be the pioneer.</p>
-      <p className="mt-1 text-sm text-muted-foreground">Scan the first profile and it&apos;ll show up right here.</p>
+      <p className="mt-1 text-sm text-muted-foreground">Import your X archive and your playlists will show up right here.</p>
     </div>
   );
 }

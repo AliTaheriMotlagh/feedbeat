@@ -4,6 +4,7 @@ import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { nextCookies } from "better-auth/next-js";
 import { headers } from "next/headers";
 import { cache } from "react";
+import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import * as schema from "@/db/schema";
 import { env } from "@/env";
@@ -18,13 +19,25 @@ export const auth = betterAuth({
     schema: { user: schema.user, session: schema.session, account: schema.account, verification: schema.verification },
   }),
   socialProviders: {
+    ...(env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET
+      ? {
+          github: {
+            clientId: env.GITHUB_CLIENT_ID,
+            clientSecret: env.GITHUB_CLIENT_SECRET,
+            mapProfileToUser: (profile) => ({ username: profile.login }),
+          },
+        }
+      : {}),
+    ...(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET
+      ? { google: { clientId: env.GOOGLE_CLIENT_ID, clientSecret: env.GOOGLE_CLIENT_SECRET, prompt: "select_account" as const } }
+      : {}),
     ...(env.X_CLIENT_ID && env.X_CLIENT_SECRET
       ? {
           twitter: {
             clientId: env.X_CLIENT_ID,
             clientSecret: env.X_CLIENT_SECRET,
             mapProfileToUser: (profile) => ({
-              username: profile.data.username.toLowerCase(),
+              username: profile.data.username,
               image: profile.data.profile_image_url?.replace("_normal", "_400x400"),
             }),
           },
@@ -43,13 +56,21 @@ export const auth = betterAuth({
       : {}),
   },
   account: {
-    accountLinking: { enabled: true, trustedProviders: ["twitter", "spotify"], allowDifferentEmails: true },
+    accountLinking: { enabled: true, trustedProviders: ["github", "google", "twitter", "spotify"], allowDifferentEmails: true },
   },
   user: {
     additionalFields: {
       username: { type: "string", required: false, input: false },
       xp: { type: "number", required: false, defaultValue: 0, input: false },
       streak: { type: "number", required: false, defaultValue: 0, input: false },
+    },
+  },
+  databaseHooks: {
+    user: {
+      create: {
+        // Every curator gets a unique, URL-safe username for /c/[username].
+        before: async (data) => ({ data: { ...data, username: await uniqueUsername(String(data.username ?? data.name ?? "")) } }),
+      },
     },
   },
   session: {
@@ -60,6 +81,21 @@ export const auth = betterAuth({
 });
 
 export type Session = typeof auth.$Infer.Session;
+
+async function uniqueUsername(seed: string) {
+  const base =
+    seed
+      .toLowerCase()
+      .normalize("NFKD")
+      .replace(/[^a-z0-9_]+/g, "")
+      .slice(0, 20) || "curator";
+  for (let i = 0; i < 20; i++) {
+    const candidate = i === 0 ? base : `${base}${Math.floor(Math.random() * 10_000)}`;
+    const [taken] = await db.select({ id: schema.user.id }).from(schema.user).where(eq(schema.user.username, candidate));
+    if (!taken) return candidate;
+  }
+  return `${base}${crypto.randomUUID().slice(0, 8)}`;
+}
 
 /** Current session (deduped per request). */
 export const getSession = cache(async () => {
