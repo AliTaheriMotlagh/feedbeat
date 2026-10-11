@@ -2,7 +2,7 @@ import "server-only";
 import { and, desc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { account, playlists, profiles, tracks } from "@/db/schema";
-import { auth } from "@/lib/auth";
+import { getAuth } from "@/lib/auth";
 import { absoluteUrl, site } from "@/lib/site";
 
 export class ExportError extends Error {
@@ -35,6 +35,8 @@ export async function exportPlaylistToSpotify(userId: string, playlistId: string
   let accessToken: string | undefined;
   try {
     // Refreshes the token automatically when it has expired.
+    const auth = getAuth();
+    if (!auth) throw new Error("auth disabled");
     ({ accessToken } = await auth.api.getAccessToken({ body: { accountId: linked.id, userId } }));
   } catch {
     throw new ExportError("Your Spotify connection expired — please reconnect.", "not_linked");

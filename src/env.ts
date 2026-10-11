@@ -58,8 +58,14 @@ if (env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET) loginProviders.push("githu
 if (env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET) loginProviders.push("google");
 if (env.X_CLIENT_ID && env.X_CLIENT_SECRET) loginProviders.push("twitter");
 
+/** Better Auth refuses to run in production without a secret. */
+const authConfigured = Boolean(env.BETTER_AUTH_SECRET) || env.NODE_ENV !== "production";
+if (!authConfigured) console.warn("⚠️ BETTER_AUTH_SECRET is not set — sign-in is disabled.");
+
 export const features = {
-  loginProviders,
+  /** Sign-in works: a secret plus at least one provider. */
+  auth: authConfigured && loginProviders.length > 0,
+  loginProviders: authConfigured ? loginProviders : [],
   xLogin: loginProviders.includes("twitter"),
   spotifyExport: Boolean(env.SPOTIFY_CLIENT_ID && env.SPOTIFY_CLIENT_SECRET),
   scanning: Boolean(env.X_BEARER_TOKEN) || useDemoTweets,
