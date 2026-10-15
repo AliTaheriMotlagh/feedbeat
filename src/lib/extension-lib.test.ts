@@ -6,6 +6,7 @@ interface Lib {
   isMusicUrl(raw: string): boolean;
   toUrl(text: string | null | undefined): string | null;
   accountIdFromTwid(value: string | undefined): string | null;
+  musicUrlsInText(text: string | null | undefined): string[];
 }
 const lib = (globalThis as unknown as { FeedbeatLib: Lib }).FeedbeatLib;
 
@@ -46,5 +47,23 @@ describe("extension accountIdFromTwid", () => {
     expect(lib.accountIdFromTwid("junk")).toBeNull();
     expect(lib.accountIdFromTwid(undefined)).toBeNull();
     expect(lib.accountIdFromTwid("%E0%A4%A")).toBeNull();
+  });
+});
+
+describe("extension musicUrlsInText", () => {
+  it("finds the link in a default YouTube share message", () => {
+    const text = "youtobe\nBaby Keem - Highway 95 pt. 2 (Official Audio) https://youtu.be/jYJImcoL_dw?is=Z34cfm7OvEJeGQx7 via \n@YouTube";
+    expect(lib.musicUrlsInText(text)).toEqual(["https://youtu.be/jYJImcoL_dw?is=Z34cfm7OvEJeGQx7"]);
+  });
+
+  it("keeps the id of a link X truncated with an ellipsis", () => {
+    expect(lib.musicUrlsInText("Song youtu.be/jYJImcoL_dw?is=Z34c…")).toEqual(["https://youtu.be/jYJImcoL_dw?is=Z34c"]);
+  });
+
+  it("ignores lookalike hosts and trailing punctuation is not part of the link", () => {
+    expect(lib.musicUrlsInText("notyoutu.be/jYJImcoL_dw")).toEqual([]);
+    expect(lib.musicUrlsInText("listen https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC.")).toEqual([
+      "https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC",
+    ]);
   });
 });

@@ -6,7 +6,7 @@
 (function () {
   "use strict";
 
-  const { isMusicUrl, toUrl } = globalThis.FeedbeatLib;
+  const { isMusicUrl, musicUrlsInText, toUrl } = globalThis.FeedbeatLib;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   /** Handle of the account signed in to this browser (from the nav bar). */
@@ -31,10 +31,14 @@
 
       const tweetedAt = time.getAttribute("datetime");
       const text = article.querySelector('[data-testid="tweetText"]')?.innerText ?? "";
+      // X wraps links in t.co; the real destination is in the title or the visible text.
+      // Link cards and "…" truncated links often show up only as text, so read that too.
+      const urls = new Set(musicUrlsInText(article.innerText));
       for (const a of article.querySelectorAll("a[href]")) {
-        // X wraps links in t.co; the real destination is in the title or the visible text.
         const url = [a.getAttribute("title"), a.textContent].map(toUrl).find((u) => u && isMusicUrl(u));
-        if (!url) continue;
+        if (url) urls.add(url);
+      }
+      for (const url of urls) {
         const prev = state.items.get(url);
         if (!prev || tweetedAt < prev.tweetedAt) {
           state.items.set(url, { url, tweetId, tweetedAt, text: text.slice(0, 500) });

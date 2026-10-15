@@ -7,7 +7,7 @@
   "use strict";
 
   // Keep in sync with host_permissions and content_scripts in manifest.json.
-  const SITE_ORIGINS = ["https://feedbeat.app", "http://localhost:3000"];
+  const SITE_ORIGINS = ["https://feedbeat-nine.vercel.app", "http://localhost:3000"];
   const SITE_URL = SITE_ORIGINS[0];
 
   // Pre-filter only: the server re-parses every link with its own rules.
@@ -42,6 +42,23 @@
     return MUSIC_HOSTS.some((h) => host === h || host.endsWith(`.${h}`));
   }
 
+  // Links written out as plain text, e.g. the YouTube card's "youtu.be/jYJImcoL_dw?is=Z34c…".
+  // Matches up to the first space or "…", so truncated links still keep their ids.
+  const LINK_IN_TEXT = new RegExp(
+    `(?<![\\w.-])(?:https?://)?(?:[a-z0-9-]+\\.)*(?:${MUSIC_HOSTS.map((h) => h.replace(/\./g, "\\.")).join("|")})/[^\\s…]*`,
+    "gi",
+  );
+
+  /** Music links written as text in a post, including ones X shortened with "…". */
+  function musicUrlsInText(text) {
+    const urls = [];
+    for (const m of (text ?? "").matchAll(LINK_IN_TEXT)) {
+      const url = toUrl(m[0].replace(/[.,;:!?)\]]+$/, ""));
+      if (url && isMusicUrl(url)) urls.push(url);
+    }
+    return urls;
+  }
+
   /** "open.spotify.com/track/…" or "https://…" → absolute https URL, or null. */
   function toUrl(text) {
     const t = (text ?? "").trim();
@@ -67,5 +84,5 @@
     return m ? m[1] : null;
   }
 
-  root.FeedbeatLib = { SITE_URL, SITE_ORIGINS, isMusicUrl, toUrl, accountIdFromTwid };
+  root.FeedbeatLib = { SITE_URL, SITE_ORIGINS, isMusicUrl, musicUrlsInText, toUrl, accountIdFromTwid };
 })(globalThis);
