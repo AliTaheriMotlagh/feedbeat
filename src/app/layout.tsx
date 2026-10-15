@@ -70,7 +70,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           Skip to content
         </a>
         <Providers>
-          <AuthPromptProvider providers={features.loginProviders}>
+          <AuthPromptProvider providers={features.loginProviders} emailLogin={features.auth}>
             <SiteHeader />
             <main id="main" className="min-h-[60vh]">
               {children}

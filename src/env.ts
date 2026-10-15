@@ -63,8 +63,9 @@ const authConfigured = Boolean(env.BETTER_AUTH_SECRET) || env.NODE_ENV !== "prod
 if (!authConfigured) console.warn("⚠️ BETTER_AUTH_SECRET is not set — sign-in is disabled.");
 
 export const features = {
-  /** Sign-in works: a secret plus at least one provider. */
-  auth: authConfigured && loginProviders.length > 0,
+  /** Sign-in works: email and password need only the secret. */
+  auth: authConfigured,
+  /** Optional one-click providers shown above the email form. */
   loginProviders: authConfigured ? loginProviders : [],
   xLogin: loginProviders.includes("twitter"),
   spotifyExport: Boolean(env.SPOTIFY_CLIENT_ID && env.SPOTIFY_CLIENT_SECRET),

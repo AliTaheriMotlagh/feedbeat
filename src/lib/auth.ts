@@ -25,6 +25,8 @@ const createAuth = () =>
       provider: "pg",
       schema: { user: schema.user, session: schema.session, account: schema.account, verification: schema.verification },
     }),
+    // Works with only BETTER_AUTH_SECRET: no OAuth app or external mail service needed.
+    emailAndPassword: { enabled: true, minPasswordLength: 8, autoSignIn: true },
     socialProviders: {
       ...(env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET
         ? {
