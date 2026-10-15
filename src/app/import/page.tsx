@@ -60,7 +60,7 @@ export default function ImportPage() {
         <a href="/import/extension" className="font-medium text-primary hover:underline">
           Feedbeat Collector extension
         </a>{" "}
-        on your own X profile instead.
+        to scan your posts straight from X instead.
       </p>
 
       <JsonLd<HowTo>

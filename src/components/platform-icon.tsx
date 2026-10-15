@@ -1,4 +1,4 @@
-import { siApplemusic, siBandcamp, siDeezer, siGithub, siGoogle, siSoundcloud, siSpotify, siTidal, siX, siYoutube } from "simple-icons";
+import { siApplemusic, siAudiomack, siBandcamp, siDeezer, siGithub, siGoogle, siMixcloud, siSoundcloud, siSpotify, siTidal, siX, siYoutube } from "simple-icons";
 import { PLATFORMS, type PlatformId } from "@/lib/platforms";
 import { cn } from "@/lib/utils";
 
@@ -10,6 +10,8 @@ const ICONS = {
   deezer: siDeezer,
   tidal: siTidal,
   bandcamp: siBandcamp,
+  audiomack: siAudiomack,
+  mixcloud: siMixcloud,
 } satisfies Record<PlatformId, { path: string }>;
 
 interface IconProps {

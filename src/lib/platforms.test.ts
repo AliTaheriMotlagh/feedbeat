@@ -18,6 +18,17 @@ describe("parseMusicUrl", () => {
     ["https://tidal.com/browse/track/77646169", "tidal", "track", "track:77646169"],
     ["https://listen.tidal.com/album/77646168/track/77646169", "tidal", "track", "track:77646169"],
     ["https://artist.bandcamp.com/album/Great-Record", "bandcamp", "album", "artist/album/great-record"],
+    ["https://open.spotify.com/embed/track/4uLU6hMCjMI75M1A2tKUQC", "spotify", "track", "track:4uLU6hMCjMI75M1A2tKUQC"],
+    ["https://geo.music.apple.com/us/album/after-hours/1499378108?i=1499378615", "apple", "track", "song:1499378615"],
+    ["https://audiomack.com/burnaboy/song/last-last", "audiomack", "track", "song:burnaboy/last-last"],
+    ["https://audiomack.com/song/burnaboy/last-last", "audiomack", "track", "song:burnaboy/last-last"],
+    ["https://audiomack.com/burnaboy/album/love-damini", "audiomack", "album", "album:burnaboy/love-damini"],
+    ["https://www.mixcloud.com/Spartacus/party-time/", "mixcloud", "track", "spartacus/party-time"],
+    ["https://m.mixcloud.com/Spartacus/party-time", "mixcloud", "track", "spartacus/party-time"],
+    ["https://song.link/s/4uLU6hMCjMI75M1A2tKUQC", "spotify", "track", "track:4uLU6hMCjMI75M1A2tKUQC"],
+    ["https://album.link/s/1DFixLWuPkv3KT3TnV35m3", "spotify", "album", "album:1DFixLWuPkv3KT3TnV35m3"],
+    ["https://song.link/us/i/1499378615", "apple", "track", "song:1499378615"],
+    ["https://song.link/y/dQw4w9WgXcQ", "youtube", "video", "dQw4w9WgXcQ"],
   ])("parses %s", (url, platform, kind, externalId) => {
     expect(parseMusicUrl(url)).toMatchObject({ platform, kind, externalId });
   });
@@ -28,6 +39,11 @@ describe("parseMusicUrl", () => {
     "https://soundcloud.com/discover",
     "https://soundcloud.com/flume",
     "https://open.spotify.com/track/short",
+    "https://audiomack.com/burnaboy",
+    "https://www.mixcloud.com/Spartacus/",
+    "https://www.mixcloud.com/discover/house/",
+    "https://www.mixcloud.com/Spartacus/favorites/",
+    "https://song.link/some-release",
     "javascript:alert(1)",
     "not a url",
   ])("ignores %s", (url) => {
@@ -44,6 +60,13 @@ describe("isShortLink", () => {
     expect(isShortLink("https://spotify.link/abc")).toBe(true);
     expect(isShortLink("https://on.soundcloud.com/xyz")).toBe(true);
     expect(isShortLink("https://open.spotify.com/track/x")).toBe(false);
+  });
+
+  it("detects smart links, including label subdomains", () => {
+    expect(isShortLink("https://umg.lnk.to/release")).toBe(true);
+    expect(isShortLink("https://ffm.to/abc")).toBe(true);
+    expect(isShortLink("https://song.link/some-release")).toBe(true);
+    expect(isShortLink("https://notlnk.to/abc")).toBe(false);
   });
 });
 

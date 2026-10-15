@@ -15,6 +15,8 @@ export const PLATFORM_IDS = [
   "deezer",
   "tidal",
   "bandcamp",
+  "audiomack",
+  "mixcloud",
 ] as const;
 
 export type PlatformId = (typeof PLATFORM_IDS)[number];
@@ -46,6 +48,8 @@ export const PLATFORMS: Record<PlatformId, Platform> = {
   deezer: { id: "deezer", name: "Deezer", color: "#A238FF", slug: "deezer", tagline: "Tracks & albums" },
   tidal: { id: "tidal", name: "TIDAL", color: "#00FFFF", slug: "tidal", tagline: "Hi-fi tracks & albums" },
   bandcamp: { id: "bandcamp", name: "Bandcamp", color: "#1DA0C3", slug: "bandcamp", tagline: "Independent releases" },
+  audiomack: { id: "audiomack", name: "Audiomack", color: "#FFA200", slug: "audiomack", tagline: "Songs, mixtapes & albums" },
+  mixcloud: { id: "mixcloud", name: "Mixcloud", color: "#5000FF", slug: "mixcloud", tagline: "DJ mixes & radio shows" },
 };
 
 export function isPlatformId(value: string): value is PlatformId {
@@ -62,7 +66,7 @@ export interface MusicRef {
 }
 
 /** Hosts that only redirect — they must be resolved before parsing. */
-const SHORTENER_HOSTS = new Set([
+const SHORTENER_HOSTS = [
   "spotify.link",
   "spoti.fi",
   "on.soundcloud.com",
@@ -70,11 +74,25 @@ const SHORTENER_HOSTS = new Set([
   "link.deezer.com",
   "tidal.link",
   "apple.co",
-]);
+  // Smart links: a landing page that links to the release on every service.
+  "song.link",
+  "album.link",
+  "odesli.co",
+  "lnk.to",
+  "ffm.to",
+  "found.ee",
+  "smarturl.it",
+  "fanlink.to",
+  "fanlink.tv",
+];
 
+/** Short and smart links: resolved on the server, then parsed like any other link. */
 export function isShortLink(raw: string): boolean {
   const url = safeUrl(raw);
-  return url ? SHORTENER_HOSTS.has(url.hostname.toLowerCase()) : false;
+  if (!url) return false;
+  const host = url.hostname.toLowerCase();
+  // Labels use subdomains, e.g. umg.lnk.to/release.
+  return SHORTENER_HOSTS.some((h) => host === h || host.endsWith(`.${h}`));
 }
 
 function safeUrl(raw: string): URL | null {
@@ -99,8 +117,8 @@ export function parseMusicUrl(raw: string): MusicRef | null {
 
   // ---- Spotify ------------------------------------------------------------
   if (host === "open.spotify.com" || host === "play.spotify.com") {
-    // Optional locale prefix: /intl-de/track/{id}
-    const p = parts[0]?.startsWith("intl-") ? parts.slice(1) : parts;
+    // Optional locale or embed prefix: /intl-de/track/{id}, /embed/track/{id}
+    const p = parts.filter((part, i) => !(i < 2 && (part.startsWith("intl-") || part === "embed")));
     // Legacy: /user/{user}/playlist/{id}
     const typeIdx = p[0] === "user" && p[2] === "playlist" ? 2 : 0;
     const type = p[typeIdx];
@@ -152,7 +170,7 @@ export function parseMusicUrl(raw: string): MusicRef | null {
   }
 
   // ---- Apple Music ----------------------------------------------------------
-  if (host === "music.apple.com" || host === "itunes.apple.com") {
+  if (host === "music.apple.com" || host === "geo.music.apple.com" || host === "embed.music.apple.com" || host === "itunes.apple.com") {
     // /{country}/album/{slug}/{albumId}?i={trackId}  |  /{country}/song/{slug}/{id}
     const country = /^[a-z]{2}$/.test(parts[0] ?? "") ? parts[0] : "us";
     const rest = /^[a-z]{2}$/.test(parts[0] ?? "") ? parts.slice(1) : parts;
@@ -232,6 +250,52 @@ export function parseMusicUrl(raw: string): MusicRef | null {
     return null;
   }
 
+  // ---- Audiomack ------------------------------------------------------------
+  if (host === "audiomack.com") {
+    // /{artist}/song/{slug} | legacy /song/{artist}/{slug} | /embed/song/{artist}/{slug}
+    const p = parts[0] === "embed" ? parts.slice(1) : parts;
+    const kinds: Record<string, MediaKind> = { song: "track", album: "album", playlist: "playlist" };
+    const [artist, type, slug] = kinds[p[1]] ? [p[0], p[1], p[2]] : [p[1], p[0], p[2]];
+    if (artist && slug && kinds[type] && p.length === 3) {
+      const path = `${artist}/${slug}`.toLowerCase();
+      return {
+        platform: "audiomack",
+        kind: kinds[type],
+        externalId: `${type}:${path}`,
+        url: `https://audiomack.com/${artist.toLowerCase()}/${type}/${slug.toLowerCase()}`,
+      };
+    }
+    return null;
+  }
+
+  // ---- Mixcloud -------------------------------------------------------------
+  if (host === "mixcloud.com") {
+    // /{user}/{mix}/ — everything else is a profile, list or site page.
+    const reserved = new Set(["discover", "live", "upload", "dashboard", "settings", "select", "categories", "tag", "search", "about", "pro", "player", "widget"]);
+    const userPages = new Set(["uploads", "favorites", "listens", "playlists", "followers", "following", "stream", "reposts", "shows", "stats", "posts", "hosts"]);
+    if (parts.length === 2 && !reserved.has(parts[0].toLowerCase()) && !userPages.has(parts[1].toLowerCase())) {
+      const path = `${parts[0]}/${parts[1]}`.toLowerCase();
+      return { platform: "mixcloud", kind: "track", externalId: path, url: `https://www.mixcloud.com/${path}/` };
+    }
+    return null;
+  }
+
+  // ---- song.link / album.link (Odesli) ---------------------------------------
+  // Short form names the source service: /s/{spotifyId}, /i/{appleId}, /y/{youtubeId}, /d/{deezerId}.
+  if (host === "song.link" || host === "album.link" || host === "odesli.co") {
+    const p = /^[a-z]{2}$/.test(parts[0] ?? "") ? parts.slice(1) : parts;
+    const [code, id] = p;
+    if (p.length !== 2 || !id) return null;
+    const album = host === "album.link";
+    const target: Record<string, string> = {
+      s: `https://open.spotify.com/${album ? "album" : "track"}/${id}`,
+      i: album ? `https://music.apple.com/us/album/${id}` : `https://music.apple.com/us/song/${id}`,
+      d: `https://www.deezer.com/${album ? "album" : "track"}/${id}`,
+      ...(album ? {} : { y: `https://youtu.be/${id}` }),
+    };
+    return target[code] ? parseMusicUrl(target[code]) : null;
+  }
+
   // ---- Bandcamp -------------------------------------------------------------
   if (host.endsWith(".bandcamp.com") && (parts[0] === "track" || parts[0] === "album") && parts[1]) {
     const artist = host.replace(/\.bandcamp\.com$/, "");
@@ -265,6 +329,12 @@ export function embedUrl(ref: Pick<MusicRef, "platform" | "kind" | "externalId" 
       return `https://widget.deezer.com/widget/${opts.dark ? "dark" : "light"}/${prefix}/${id}`;
     case "tidal":
       return `https://embed.tidal.com/${prefix}s/${id}`;
+    case "audiomack": {
+      // externalId is "{type}:{artist}/{slug}"
+      return `https://audiomack.com/embed/${prefix}/${id}?background=1`;
+    }
+    case "mixcloud":
+      return `https://player-widget.mixcloud.com/widget/iframe/?hide_cover=1&autoplay=1&feed=${encodeURIComponent(`/${ref.externalId}/`)}`;
     case "bandcamp":
       return null;
   }
@@ -276,5 +346,7 @@ export function embedHeight(ref: Pick<MusicRef, "platform" | "kind">): number {
   if (ref.platform === "soundcloud") return 300;
   if (ref.platform === "spotify") return ref.kind === "track" || ref.kind === "episode" ? 152 : 352;
   if (ref.platform === "apple") return ref.kind === "track" ? 175 : 450;
+  if (ref.platform === "audiomack") return ref.kind === "track" ? 252 : 400;
+  if (ref.platform === "mixcloud") return 120;
   return 300;
 }

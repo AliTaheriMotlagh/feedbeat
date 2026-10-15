@@ -11,6 +11,9 @@ const FRAME_SRC = [
   "https://w.soundcloud.com",
   "https://widget.deezer.com",
   "https://embed.tidal.com",
+  "https://audiomack.com",
+  "https://player-widget.mixcloud.com",
+  "https://www.mixcloud.com",
 ];
 
 // Nonce-free CSP keeps pages prerenderable (Partial Prerendering) while still

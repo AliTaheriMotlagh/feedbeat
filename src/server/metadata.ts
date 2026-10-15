@@ -1,5 +1,5 @@
 import "server-only";
-import { isShortLink, type MusicRef } from "@/lib/platforms";
+import { isShortLink, parseMusicUrl, PLATFORM_IDS, type MusicRef } from "@/lib/platforms";
 
 export interface TrackMeta {
   title: string | null;
@@ -42,16 +42,43 @@ function decode(s?: string) {
     .replace(/&gt;/g, ">");
 }
 
-/** Follow redirects for known short-link hosts. Returns the final URL or the input. */
+/**
+ * Resolve a known short or smart link to a music URL. Short links redirect;
+ * smart links (lnk.to, song.link, …) land on a page that links to every service,
+ * so we pick the best streaming link from that page. Returns the input when
+ * nothing better is found.
+ */
 export async function resolveShortLink(url: string): Promise<string> {
-  if (!isShortLink(url)) return url;
+  if (!isShortLink(url) || parseMusicUrl(url)) return url;
   try {
-    const res = await fetch(url, { redirect: "follow", headers: { "User-Agent": UA }, signal: AbortSignal.timeout(5_000) });
-    await res.body?.cancel();
-    return res.url || url;
+    const res = await fetch(url, { redirect: "follow", headers: { "User-Agent": UA }, signal: AbortSignal.timeout(6_000) });
+    if (parseMusicUrl(res.url)) {
+      await res.body?.cancel();
+      return res.url;
+    }
+    const type = res.headers.get("content-type") ?? "";
+    if (!res.ok || !type.includes("html")) {
+      await res.body?.cancel();
+      return res.url || url;
+    }
+    return pickMusicLink((await res.text()).slice(0, 500_000)) ?? res.url ?? url;
   } catch {
     return url;
   }
+}
+
+/** Best streaming link on a smart-link landing page: platform order, then songs before artist pages. */
+export function pickMusicLink(html: string): string | null {
+  // Scripts often hold JSON-escaped URLs ("https:\/\/open.spotify.com\/…").
+  const links = html.replace(/&amp;/g, "&").replace(/\\\//g, "/").match(/https?:\/\/[^\s"'<>\\]+/g) ?? [];
+  let best: { url: string; score: number } | null = null;
+  for (const link of new Set(links)) {
+    const ref = parseMusicUrl(link);
+    if (!ref) continue;
+    const score = PLATFORM_IDS.indexOf(ref.platform) + (ref.kind === "artist" || ref.kind === "show" ? 100 : 0);
+    if (!best || score < best.score) best = { url: ref.url, score };
+  }
+  return best?.url ?? null;
 }
 
 export async function fetchTrackMeta(ref: MusicRef): Promise<TrackMeta> {
@@ -122,6 +149,22 @@ export async function fetchTrackMeta(ref: MusicRef): Promise<TrackMeta> {
         artist: r.artistName ?? null,
         thumbnailUrl: r.artworkUrl100?.replace("100x100bb", "300x300bb") ?? null,
       };
+    }
+    case "audiomack":
+    case "mixcloud": {
+      const endpoint =
+        ref.platform === "audiomack" ? "https://audiomack.com/oembed?format=json&url=" : "https://app.mixcloud.com/oembed/?format=json&url=";
+      const o = await getJson<{ title?: string; author_name?: string; thumbnail_url?: string; image?: string }>(
+        `${endpoint}${encodeURIComponent(ref.url)}`,
+      );
+      if (o?.title) {
+        const artist = o.author_name ?? null;
+        // Both services title embeds like "Song by Artist".
+        const title = artist ? o.title.replace(new RegExp(` by ${escapeRe(artist)}$`), "") : o.title;
+        return { title, artist, thumbnailUrl: o.thumbnail_url ?? o.image ?? null };
+      }
+      const og = await getOpenGraph(ref.url);
+      return { title: og.title ?? null, artist: null, thumbnailUrl: og.image ?? null };
     }
     case "tidal":
     case "bandcamp": {
