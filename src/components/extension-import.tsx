@@ -204,11 +204,16 @@ interface Action {
   disabled?: boolean;
 }
 
-/** Re-render every `ms` so time-based hints (stuck scans) appear. */
+/**
+ * Re-render every `ms` so time-based hints (stuck scans) appear.
+ * Starts at 0 (no hints): the clock is only read after mount, never while prerendering.
+ */
 function useNow(ms: number) {
-  const [now, setNow] = useState(() => Date.now());
+  const [now, setNow] = useState(0);
   useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), ms);
+    const tick = () => setNow(Date.now());
+    tick();
+    const id = setInterval(tick, ms);
     return () => clearInterval(id);
   }, [ms]);
   return now;
