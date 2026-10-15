@@ -205,6 +205,11 @@
     return `${X_ORIGIN}/search?q=${encodeURIComponent(q)}&src=typed_query&f=live`;
   }
 
+  /** Where a scan's X page should be: its search window, or home until the handle is known. */
+  function scanUrl(scan) {
+    return scan.handle ? searchUrl(scan.handle, { until: scan.until, since: scan.since }) : `${X_ORIGIN}/home`;
+  }
+
   /**
    * Upper bound for the next search window once a window runs dry.
    * X stops serving a search after a few hundred results, so we restart it
@@ -233,8 +238,9 @@
       mode: "all", // all: back through history · new: only posts since the newest one we have
       message: null,
       runId: null,
+      target: "tab", // tab: an X tab · frame: the iframe on the Feedbeat page
       tabId: null,
-      windowId: null,
+      attached: false, // the X page picked up the current run
       until: null,
       since: null,
       newest: null,
@@ -299,6 +305,11 @@
       complete: scan.complete,
       resumeAt: scan.resumeAt,
       updatedAt: scan.updatedAt,
+      runId: scan.runId,
+      target: scan.target,
+      tabId: scan.tabId,
+      attached: scan.attached,
+      scanUrl: scanUrl(scan),
       platforms,
       recent,
     };
@@ -318,6 +329,7 @@
     dayOf,
     addDays,
     searchUrl,
+    scanUrl,
     nextUntil,
     newScan,
     mergeTweets,

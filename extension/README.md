@@ -4,7 +4,9 @@ Scans the signed-in user's own X posts for music links and hands them to Feedbea
 
 ## How a scan works
 
-1. The user presses **Start** on `/import/extension` (or in the popup). The service worker opens a small X window.
+1. Where it runs:
+   - **Website:** on `/import/extension`, **Scan my X posts** loads X in an iframe on that page. X refuses to be framed, so while that scan runs a `declarativeNetRequest` session rule removes X's `X-Frame-Options`/CSP headers for x.com frames **in that one tab only**. If X won't load or shows you signed out there (for example, the browser blocks X's cookies in frames), the page offers **Scan in an X tab**.
+   - **Popup:** **Scan my posts in this tab** uses the X tab in front, or opens one.
 2. `collect.js` searches `from:<handle> filter:links`, latest first. X stops serving a search after a few hundred results, so when a search runs dry it reloads it with `until:<oldest day reached>`, one date window at a time, back to the first post.
 3. `hook.js` (page world) copies X's own timeline responses, which carry the full links that the page only shows as `t.co` or truncated. Reading the rendered page is the fallback.
 4. Progress goes to the service worker every few seconds, so a scan can be paused, survive a closed window or browser restart, and **continue** from the oldest day reached. When the history is complete, **Check for new posts** scans only posts newer than the newest one collected.
@@ -13,8 +15,8 @@ Scans the signed-in user's own X posts for music links and hands them to Feedbea
 | File | Runs in | Role |
 | --- | --- | --- |
 | `background.js` | service worker | Owns the scan state (only writer), opens the X window, badge, hands the batch to the site |
-| `collect.js` | x.com, isolated world | Scrolls the search, reads posts, reports progress |
-| `hook.js` | x.com, page world | Forwards X's timeline responses to `collect.js` |
+| `collect.js` | x.com tab or frame, isolated world | Scrolls the search, reads posts, reports progress |
+| `hook.js` | x.com tab or frame, page world | Forwards X's timeline responses to `collect.js` |
 | `bridge.js` | Feedbeat `/import/extension` | Relays the page's commands and pushes live scan state |
 | `popup.*` | toolbar popup | Same controls as the site |
 | `lib.js` | everywhere | Pure helpers, unit-tested in `src/lib/extension-lib.test.ts` |
@@ -25,6 +27,7 @@ Scans the signed-in user's own X posts for music links and hands them to Feedbea
 - `cookies`: read X's `twid` cookie to know which account is signed in.
 - `storage`, `unlimitedStorage`: keep scan progress so it can continue later.
 - `alarms`: resume after X's rate-limit window.
+- `declarativeNetRequestWithHostAccess`: let x.com load in the Feedbeat page's iframe, only in the tab running a scan and only while it runs.
 - Feedbeat origin: the bridge on `/import/extension`.
 
 ## Develop

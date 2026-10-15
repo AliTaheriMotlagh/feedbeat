@@ -14,6 +14,8 @@ const FRAME_SRC = [
   "https://audiomack.com",
   "https://player-widget.mixcloud.com",
   "https://www.mixcloud.com",
+  // The Feedbeat Collector extension scans the visitor's own X posts in a frame on /import/extension.
+  "https://x.com",
 ];
 
 // Nonce-free CSP keeps pages prerenderable (Partial Prerendering) while still

@@ -1,10 +1,14 @@
 /*
  * Service worker. Owns the scan state (the only writer, so commands and
- * progress never race), opens the X window the scan runs in, and hands the
+ * progress never race), points the scan at its X page and hands the
  * collected links to the Feedbeat site.
  *
- * The scan itself runs in the X tab (collect.js): MV3 workers are stopped
- * after a few idle minutes, so nothing long-running lives here.
+ * A scan runs in one of two places (collect.js does the work, since MV3
+ * workers are stopped after a few idle minutes):
+ *  - "tab":   the person's X tab (started from the popup, or as a fallback),
+ *  - "frame": an X iframe on the Feedbeat import page (started from the site).
+ *    X refuses to be framed, so while such a scan runs a session rule lets
+ *    x.com load in frames of that one tab only.
  */
 importScripts("lib.js");
 
@@ -12,6 +16,8 @@ const L = self.FeedbeatLib;
 const KEY = "scan";
 const RESUME_ALARM = "feedbeat-resume";
 const IMPORT_PATH = "/import/extension";
+const FRAME_RULE_ID = 1;
+const ACTIVE = ["running", "cooldown"];
 
 /* --------------------------------- State ---------------------------------- */
 
@@ -45,16 +51,19 @@ const newRunId = () => crypto.randomUUID();
 /* ------------------------------- Commands --------------------------------- */
 
 /**
- * kind: "continue" — pick up where the scan stopped (older posts),
- *       "new"      — only posts newer than the newest one collected,
- *       "restart"  — forget everything and scan from the top.
+ * kind:  "continue" — pick up where the scan stopped (older posts),
+ *        "new"      — only posts newer than the newest one collected,
+ *        "restart"  — forget everything and scan from the top.
+ * where: { target: "frame", tabId } — the Feedbeat page's iframe,
+ *        { target: "tab", returnTabId? } — the active X tab, or a new one.
  */
-async function start(kind, returnTabId) {
+async function start(kind, where) {
   const accountId = await currentAccountId();
   if (!accountId) throw new Error("Sign in to X in this browser first, then try again.");
 
+  const tabId = where.target === "frame" ? where.tabId : await pickXTab();
   const scan = await update((prev) => {
-    let s = prev && prev.accountId === accountId && kind !== "restart" ? prev : L.newScan(accountId);
+    const s = prev && prev.accountId === accountId && kind !== "restart" ? prev : L.newScan(accountId);
     const resumable = s.mode === "new" && ["paused", "cooldown", "error"].includes(s.status);
     if (kind === "new" && s.newest) {
       Object.assign(s, { mode: "new", since: L.dayOf(s.newest), until: null });
@@ -64,53 +73,75 @@ async function start(kind, returnTabId) {
       // Otherwise re-read the oldest day reached; posts already seen are skipped.
       else Object.assign(s, { mode: "all", since: null, until: s.oldest ? L.addDays(L.dayOf(s.oldest), 1) : null });
     }
-    return Object.assign(s, { status: "running", runId: newRunId(), message: null, resumeAt: null, returnTabId: returnTabId ?? null });
+    return Object.assign(s, {
+      status: "running",
+      runId: newRunId(),
+      message: null,
+      resumeAt: null,
+      target: where.target,
+      tabId,
+      attached: false,
+      returnTabId: where.returnTabId ?? null,
+    });
   });
   await chrome.alarms.clear(RESUME_ALARM);
-  await openScanTab(scan);
+  await syncFrameRule(scan);
+  if (scan.target === "tab") await showTab(scan);
   return L.summarize(scan);
 }
 
-/** Load the scan's next page in its own window, reusing it when it's still open. */
-async function openScanTab(scan) {
-  const url = scan.handle ? L.searchUrl(scan.handle, { until: scan.until, since: scan.since }) : `${L.X_ORIGIN}/home`;
-  if (scan.tabId != null) {
-    try {
-      const tab = await chrome.tabs.update(scan.tabId, { url, active: true });
-      await chrome.windows.update(tab.windowId, { focused: true, state: "normal" });
-      return;
-    } catch {
-      // Closed since; open a new one.
-    }
-  }
-  // X only loads more posts while the page is on screen, so the scan gets a window of its own.
-  const win = await chrome.windows.create({ url, type: "popup", width: 560, height: 900, focused: true });
-  const tabId = win.tabs?.[0]?.id ?? null;
-  await update((s) => (s && s.runId === scan.runId ? Object.assign(s, { tabId, windowId: win.id }) : undefined));
+/** The X tab in front, or a fresh one. */
+async function pickXTab() {
+  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  if (tab?.id != null && tab.url?.startsWith(`${L.X_ORIGIN}/`)) return tab.id;
+  const created = await chrome.tabs.create({ url: "about:blank", active: true });
+  return created.id;
 }
 
-async function closeScanWindow(scan) {
-  if (scan?.windowId == null) return;
-  await chrome.windows.remove(scan.windowId).catch(() => {});
+/** Load the scan's page in its tab and bring it to the front: X only loads posts on screen. */
+async function showTab(scan) {
+  const tab = await chrome.tabs.update(scan.tabId, { url: L.scanUrl(scan), active: true });
+  await chrome.windows.update(tab.windowId, { focused: true });
 }
 
-async function pause(message) {
+/** Let x.com load inside the Feedbeat tab's iframe while a frame scan is on. */
+async function syncFrameRule(scan) {
+  const tabId = scan?.target === "frame" && [...ACTIVE, "error"].includes(scan.status) ? scan.tabId : null;
+  await chrome.declarativeNetRequest.updateSessionRules({
+    removeRuleIds: [FRAME_RULE_ID],
+    addRules:
+      tabId == null
+        ? []
+        : [
+            {
+              id: FRAME_RULE_ID,
+              priority: 1,
+              action: {
+                type: "modifyHeaders",
+                responseHeaders: [
+                  { header: "x-frame-options", operation: "remove" },
+                  { header: "content-security-policy", operation: "remove" },
+                ],
+              },
+              condition: { tabIds: [tabId], requestDomains: ["x.com"], resourceTypes: ["sub_frame"] },
+            },
+          ],
+  });
+}
+
+async function pause() {
   const scan = await update((s) =>
-    s && ["running", "cooldown"].includes(s.status)
-      ? Object.assign(s, { status: "paused", message: message ?? "Paused. Continue any time; progress is saved.", resumeAt: null })
-      : undefined,
+    s && ACTIVE.includes(s.status) ? Object.assign(s, { status: "paused", message: null, resumeAt: null }) : undefined,
   );
   await chrome.alarms.clear(RESUME_ALARM);
-  await closeScanWindow(scan);
-  if (scan) await update((s) => (s ? Object.assign(s, { tabId: null, windowId: null }) : undefined));
+  await syncFrameRule(scan);
   return L.summarize(scan);
 }
 
 async function reset() {
-  const scan = await read();
   await chrome.alarms.clear(RESUME_ALARM);
-  await closeScanWindow(scan);
   await update(() => null);
+  await syncFrameRule(null);
   return null;
 }
 
@@ -132,21 +163,28 @@ async function buildBatch() {
   };
 }
 
-/* ---------------------------- Collector (X tab) --------------------------- */
+/* ---------------------------- Collector (X page) -------------------------- */
 
-/** The X tab asks on every page load whether it should be scanning. */
-async function whoami(sender) {
-  const scan = await read();
-  if (!scan || scan.status !== "running" || sender.tab?.id !== scan.tabId) return { run: false };
-  const { runId, accountId, handle, mode, since, until, seen } = scan;
-  return { run: true, scan: { runId, accountId, handle, mode, since, until, seen } };
+/** Is this X page the one the scan runs in? */
+function isTarget(scan, sender) {
+  if (sender.tab?.id !== scan.tabId) return false;
+  return scan.target === "frame" ? sender.frameId > 0 : sender.frameId === 0;
 }
 
-/** Progress from the X tab. Returns stop: true once the scan was paused or replaced. */
+/** Every X page asks on load whether it should be scanning. */
+async function whoami(sender) {
+  const scan = await read();
+  if (!scan || scan.status !== "running" || !isTarget(scan, sender)) return { run: false };
+  if (!scan.attached) await update((s) => (s?.runId === scan.runId ? Object.assign(s, { attached: true }) : undefined));
+  const { runId, accountId, handle, mode, since, until, seen, target } = scan;
+  return { run: true, scan: { runId, accountId, handle, mode, since, until, seen, inFrame: target === "frame" } };
+}
+
+/** Progress from the X page. Returns stop: true once the scan was paused or replaced. */
 async function progress(sender, patch) {
   let finished = null;
   const scan = await update((s) => {
-    if (!s || s.runId !== patch.runId || s.status !== "running" || sender.tab?.id !== s.tabId) return undefined;
+    if (!s || s.runId !== patch.runId || s.status !== "running" || !isTarget(s, sender)) return undefined;
     if (patch.handle && !s.handle) s.handle = patch.handle;
     if (patch.profile?.username?.toLowerCase() === s.handle?.toLowerCase()) s.profile = patch.profile;
     if (patch.tweets?.length) L.mergeTweets(s, patch.tweets);
@@ -166,14 +204,10 @@ async function progress(sender, patch) {
 }
 
 async function onFinished(scan) {
-  if (scan.status === "cooldown") {
-    await chrome.alarms.create(RESUME_ALARM, { when: scan.resumeAt });
-    return;
-  }
-  if (scan.status !== "done") return; // errors stay on screen so they can be fixed in that window
-  await closeScanWindow(scan);
-  await update((s) => (s ? Object.assign(s, { tabId: null, windowId: null }) : undefined));
-  // Bring the person back to Feedbeat to publish.
+  await syncFrameRule(scan);
+  if (scan.status === "cooldown") await chrome.alarms.create(RESUME_ALARM, { when: scan.resumeAt });
+  // A tab scan ends with Feedbeat in front, ready to publish. A frame scan is already there.
+  if (scan.status !== "done" || scan.target !== "tab") return;
   const back = scan.returnTabId != null ? await chrome.tabs.get(scan.returnTabId).catch(() => null) : null;
   if (back) {
     await chrome.tabs.update(back.id, { active: true });
@@ -187,17 +221,26 @@ async function onFinished(scan) {
 
 const isSite = (sender) => {
   try {
-    return L.SITE_ORIGINS.includes(new URL(sender.url).origin);
+    return sender.frameId === 0 && L.SITE_ORIGINS.includes(new URL(sender.url).origin);
   } catch {
     return false;
   }
 };
 const isPopup = (sender) => sender.url?.startsWith(`chrome-extension://${chrome.runtime.id}/`) ?? false;
-const isXTab = (sender) => sender.tab != null && sender.url?.startsWith(`${L.X_ORIGIN}/`);
+const isX = (sender) => sender.tab != null && sender.url?.startsWith(`${L.X_ORIGIN}/`);
+
+/** Site: scan in this page's iframe, or in a new tab when asked. Popup: the X tab in front. */
+function whereFor(payload, sender) {
+  if (!isSite(sender)) return { target: "tab" };
+  return payload?.target === "tab" ? { target: "tab", returnTabId: sender.tab.id } : { target: "frame", tabId: sender.tab.id };
+}
 
 const HANDLERS = {
-  "feedbeat:get": { from: [isSite, isPopup], run: async () => ({ state: L.summarize(await read()), signedIn: (await currentAccountId()) !== null }) },
-  "feedbeat:start": { from: [isSite, isPopup], run: async (p, s) => ({ state: await start(p?.kind ?? "continue", isSite(s) ? s.tab?.id : null) }) },
+  "feedbeat:get": {
+    from: [isSite, isPopup],
+    run: async (_p, s) => ({ state: L.summarize(await read()), signedIn: (await currentAccountId()) !== null, tabId: s.tab?.id ?? null }),
+  },
+  "feedbeat:start": { from: [isSite, isPopup], run: async (p, s) => ({ state: await start(p?.kind ?? "continue", whereFor(p, s)) }) },
   "feedbeat:pause": { from: [isSite, isPopup], run: async () => ({ state: await pause() }) },
   "feedbeat:reset": { from: [isSite, isPopup], run: async () => ({ state: await reset() }) },
   "feedbeat:open-site": { from: [isPopup], run: async () => (await chrome.tabs.create({ url: `${L.SITE_URL}${IMPORT_PATH}` }), {}) },
@@ -210,8 +253,8 @@ const HANDLERS = {
       return { state: L.summarize(scan) };
     },
   },
-  "feedbeat:whoami": { from: [isXTab], run: (_p, s) => whoami(s) },
-  "feedbeat:progress": { from: [isXTab], run: (p, s) => progress(s, p) },
+  "feedbeat:whoami": { from: [isX], run: (_p, s) => whoami(s) },
+  "feedbeat:progress": { from: [isX], run: (p, s) => progress(s, p) },
 };
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -228,33 +271,28 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 chrome.tabs.onRemoved.addListener(async (tabId) => {
   const scan = await read();
-  if (scan?.tabId !== tabId) return;
-  await update((s) =>
-    Object.assign(s, {
-      tabId: null,
-      windowId: null,
-      ...(["running", "cooldown"].includes(s.status) && { status: "paused", message: "The X window was closed. Continue any time; progress is saved." }),
-    }),
-  );
+  if (scan?.tabId !== tabId || !ACTIVE.includes(scan.status)) return;
+  const next = await update((s) => Object.assign(s, { status: "paused", message: "The tab was closed. Continue any time; progress is saved." }));
   await chrome.alarms.clear(RESUME_ALARM);
+  await syncFrameRule(next);
 });
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name !== RESUME_ALARM) return;
   const scan = await update((s) =>
-    s?.status === "cooldown" ? Object.assign(s, { status: "running", runId: newRunId(), message: null, resumeAt: null }) : undefined,
+    s?.status === "cooldown" ? Object.assign(s, { status: "running", runId: newRunId(), message: null, resumeAt: null, attached: false }) : undefined,
   );
-  if (scan?.status === "running") await openScanTab(scan);
+  // A frame scan restarts when the page sees the new run; a tab scan is reloaded here.
+  if (scan?.status === "running" && scan.target === "tab") await showTab(scan).catch(() => pause());
 });
 
-// A scan can't survive a browser restart: its window is gone.
-chrome.runtime.onStartup.addListener(() =>
-  update((s) =>
-    s && ["running", "cooldown"].includes(s.status)
-      ? Object.assign(s, { status: "paused", tabId: null, windowId: null, message: "Paused when the browser closed. Continue any time." })
-      : undefined,
-  ),
-);
+// A scan can't survive a browser restart: its page is gone.
+chrome.runtime.onStartup.addListener(async () => {
+  const scan = await update((s) =>
+    s && ACTIVE.includes(s.status) ? Object.assign(s, { status: "paused", message: "Paused when the browser closed. Continue any time." }) : undefined,
+  );
+  await syncFrameRule(scan);
+});
 
 /* -------------------------------- Badge ----------------------------------- */
 

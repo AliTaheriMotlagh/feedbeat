@@ -5,12 +5,12 @@
   "description": "Turns the music links in your own X posts into Feedbeat playlists. Reads your posts in your browser, only when you start a scan.",
   "minimum_chrome_version": "111",
   "icons": { "16": "icons/icon16.png", "32": "icons/icon32.png", "48": "icons/icon48.png", "128": "icons/icon128.png" },
-  "permissions": ["alarms", "cookies", "storage", "unlimitedStorage"],
+  "permissions": ["alarms", "cookies", "declarativeNetRequestWithHostAccess", "storage", "unlimitedStorage"],
   "host_permissions": ["https://x.com/*", "https://feedbeat-nine.vercel.app/*", "http://localhost:3000/*"],
   "background": { "service_worker": "background.js" },
   "content_scripts": [
-    { "matches": ["https://x.com/*"], "js": ["hook.js"], "run_at": "document_start", "world": "MAIN" },
-    { "matches": ["https://x.com/*"], "js": ["lib.js", "collect.js"], "run_at": "document_idle" },
+    { "matches": ["https://x.com/*"], "js": ["hook.js"], "run_at": "document_start", "world": "MAIN", "all_frames": true },
+    { "matches": ["https://x.com/*"], "js": ["lib.js", "collect.js"], "run_at": "document_idle", "all_frames": true },
     {
       "matches": ["https://feedbeat-nine.vercel.app/import/extension*", "http://localhost:3000/import/extension*"],
       "js": ["lib.js", "bridge.js"],

@@ -1,6 +1,6 @@
 /*
- * Content script for x.com. Does nothing unless the service worker says this
- * tab is running a scan. Then it reads the signed-in account's posts with
+ * Content script for x.com (tabs and the iframe on the Feedbeat page). Does
+ * nothing unless the service worker says this page is running a scan. Then it reads the signed-in account's posts with
  * X search ("from:you filter:links"), latest first, one date window at a time:
  * X stops serving a search after a few hundred results, so when a window runs
  * dry it reloads the search ending at the oldest day reached. Progress goes to
@@ -128,7 +128,7 @@
   /** Go to `url`, unless we've been bounced away from it a few times already. */
   function navigate(url) {
     const tries = sessionStorage.getItem(NAV_KEY) === url ? 1 : 0;
-    if (tries) throw new Error("X didn't open the search. Check this window, then press Continue.");
+    if (tries) throw new Error("X didn't open the search page. Check that X works in this browser, then press Continue.");
     sessionStorage.setItem(NAV_KEY, url);
     location.assign(url);
   }
@@ -141,9 +141,16 @@
 
     // 1. Make sure the right account is signed in.
     const handle = await waitFor(signedInHandle, 20_000);
-    if (!handle) return report({ status: "error", message: "Sign in to X in this window, then press Continue." });
+    if (!handle) {
+      return report({
+        status: "error",
+        message: scan.inFrame
+          ? "X shows you as signed out inside this page (your browser keeps X's sign-in out of frames). Use “Scan in an X tab” instead."
+          : "Sign in to X in this tab, then press Continue.",
+      });
+    }
     if (scan.handle && scan.handle.toLowerCase() !== handle.toLowerCase()) {
-      return report({ status: "error", message: `This window is signed in as @${handle}, but the scan is for @${scan.handle}. Switch accounts or start over.` });
+      return report({ status: "error", message: `X is signed in as @${handle}, but the scan is for @${scan.handle}. Switch accounts or start over.` });
     }
     if (!scan.handle) await report({ handle });
 
@@ -168,7 +175,7 @@
 
     for (;;) {
       if (document.hidden) {
-        if (!hiddenWarned) await report({ message: "Keep the X window on screen. X only loads posts while it's visible." });
+        if (!hiddenWarned) await report({ message: "Waiting: bring this tab back to the front. X only loads posts while it's on screen." });
         hiddenWarned = true;
         await waitVisible();
         continue;

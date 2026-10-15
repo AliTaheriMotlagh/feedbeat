@@ -17,25 +17,39 @@ export interface ScanSummary {
   complete: boolean;
   resumeAt: number | null;
   updatedAt: string | null;
+  runId: string | null;
+  /** tab: the person's X tab · frame: the X iframe on the Feedbeat page */
+  target: "tab" | "frame";
+  tabId: number | null;
+  /** The X page picked up the current run. */
+  attached: boolean;
+  /** Where the scan's X page should be right now. */
+  scanUrl: string;
   /** Songs per platform id; "link" counts smart links resolved on publish. */
   platforms: Record<string, number>;
   recent: { url: string; tweetedAt: string }[];
 }
 
-type Reply = { ok: true; state?: ScanSummary | null; signedIn?: boolean; batch?: ImportPayload } | { ok: false; error: string };
+type Reply =
+  | { ok: true; state?: ScanSummary | null; signedIn?: boolean; tabId?: number | null; batch?: ImportPayload }
+  | { ok: false; error: string };
 
 export type StartKind = "continue" | "new" | "restart";
+/** frame: scan inside this page · tab: scan in an X tab */
+export type StartTarget = "frame" | "tab";
 
 const TIMEOUT = 20_000;
 
 /**
  * Talk to the extension through its bridge content script (extension/bridge.js).
- * `status` is "missing" when no extension answered.
+ * `status` is "missing" when no extension answered. `here` is true when the
+ * scan runs in this browser tab (its iframe).
  */
 export function useExtension() {
   const [status, setStatus] = useState<"detecting" | "missing" | "ready">("detecting");
   const [scan, setScan] = useState<ScanSummary | null>(null);
   const [signedIn, setSignedIn] = useState(true);
+  const [tabId, setTabId] = useState<number | null>(null);
   const pending = useRef(new Map<string, (reply: Reply) => void>());
 
   const request = useCallback(
@@ -59,6 +73,7 @@ export function useExtension() {
       setStatus("ready");
       setScan(reply.state ?? null);
       setSignedIn(reply.signedIn ?? true);
+      setTabId(reply.tabId ?? null);
     }
     function onMessage(e: MessageEvent) {
       if (e.source !== window || e.data?.source !== "feedbeat-extension") return;
@@ -72,12 +87,16 @@ export function useExtension() {
         void hello();
       }
     }
+    // Signed in to X in another tab meanwhile? Check again on return.
+    const onFocus = () => void hello();
     window.addEventListener("message", onMessage);
+    window.addEventListener("focus", onFocus);
     void hello();
     const timer = setTimeout(() => setStatus((s) => (s === "detecting" ? "missing" : s)), 2500);
     return () => {
       active = false;
       window.removeEventListener("message", onMessage);
+      window.removeEventListener("focus", onFocus);
       clearTimeout(timer);
     };
   }, [request]);
@@ -93,5 +112,6 @@ export function useExtension() {
     [request],
   );
 
-  return { status, scan, signedIn, command };
+  const here = scan?.tabId != null && scan.tabId === tabId;
+  return { status, scan, signedIn, here, command };
 }

@@ -1,5 +1,5 @@
-// A remote control for the scan. The scan runs in its own X window and keeps
-// going when this popup closes; the Feedbeat site shows the same controls.
+// A remote control for the scan. It runs in the X tab (or the iframe on the
+// Feedbeat page) and keeps going when this popup closes.
 const $ = (id) => document.getElementById(id);
 const L = globalThis.FeedbeatLib;
 const fmt = (n) => n.toLocaleString("en-US");
@@ -9,7 +9,7 @@ let busy = false;
 let last = [null, true]; // [summary, signed in to X]
 
 function statusLine(s, signedIn) {
-  if (!s) return signedIn ? ["Reads your own posts in a small X window. You can pause any time."] : ["Sign in to X in this browser first.", "warn"];
+  if (!s) return signedIn ? ["Scans in your X tab (or opens one). Keep it in front while it runs; pause any time."] : ["Sign in to X in this browser first.", "warn"];
   if (s.message && s.status === "error") return [s.message, "bad"];
   if (s.message && ["cooldown", "running"].includes(s.status)) return [s.message, "warn"];
   switch (s.status) {
@@ -34,7 +34,7 @@ function render(s, signedIn) {
 
   const active = s && ["running", "cooldown"].includes(s.status);
   $("start").hidden = active;
-  $("start").textContent = !s || !s.scanned ? "Start scanning my posts" : s.complete ? "Check for new posts" : "Continue older posts";
+  $("start").textContent = !s || !s.scanned ? "Scan my posts in this tab" : s.complete ? "Check for new posts" : "Continue scanning";
   $("pause").hidden = !active;
   $("new").hidden = active || !s?.newest || s.complete;
   $("reset").hidden = active || !s;

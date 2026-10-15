@@ -1,32 +1,36 @@
 "use client";
 
-import { CheckCircle2, History, Link2, Loader2, Lock, Pause, Play, Puzzle, RefreshCw, RotateCcw, UploadCloud } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ExternalLink, History, Link2, Loader2, Lock, Pause, Play, Puzzle, RefreshCw, RotateCcw, UploadCloud } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { useSession } from "@/lib/auth-client";
 import { publishImport } from "@/lib/import-client";
 import { isPlatformId, PLATFORMS } from "@/lib/platforms";
-import { useExtension, type ScanSummary, type StartKind } from "@/lib/use-extension";
+import { useExtension, type ScanSummary, type StartKind, type StartTarget } from "@/lib/use-extension";
 import { cn } from "@/lib/utils";
 import { useAuthPrompt } from "./auth-prompt";
 import { PlatformIcon } from "./platform-icon";
 
 const EXTENSION_URL = process.env.NEXT_PUBLIC_EXTENSION_URL;
+/** No word from the X frame or tab for this long means it's stuck. */
+const ATTACH_TIMEOUT = 20_000;
+const STALL_TIMEOUT = 60_000;
 
 const fmt = (n: number) => n.toLocaleString("en-US");
 const month = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", year: "numeric" });
 
 type Upload = { done: number; total: number } | null;
 
-/** Runs the Feedbeat Collector extension's scan from the site, then publishes what it found. */
+/** Runs the Feedbeat Collector extension's scan right on this page, then publishes what it found. */
 export function ExtensionImport() {
-  const { status, scan, signedIn, command } = useExtension();
+  const { status, scan, signedIn, here, command } = useExtension();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [upload, setUpload] = useState<Upload>(null);
+  const now = useNow(5_000);
   const { data: session } = useSession();
   const prompt = useAuthPrompt();
   const router = useRouter();
@@ -44,7 +48,7 @@ export function ExtensionImport() {
     }
   }
 
-  const start = (kind: StartKind) => run("start", { kind });
+  const start = (kind: StartKind, target: StartTarget = "frame") => run("start", { kind, target });
 
   async function publish() {
     if (!session) return prompt("Sign in to publish your playlists and earn XP.");
@@ -82,70 +86,107 @@ export function ExtensionImport() {
     );
   }
 
+  const fresh = !scan || scan.status === "idle" || (!scan.scanned && scan.status === "paused");
   const active = scan?.status === "running" || scan?.status === "cooldown";
-  const canPublish = !!scan?.songs && !active;
+  const inFrame = scan?.target === "frame";
+  const showFrame = !!scan && inFrame && here && (active || scan.status === "error");
+  const elsewhere = !!scan && active && inFrame && !here;
+  const updatedAgo = scan?.updatedAt ? now - Date.parse(scan.updatedAt) : 0;
+  const notLoading = !!scan && scan.status === "running" && !scan.attached && updatedAgo > ATTACH_TIMEOUT;
+  const stalled = !!scan && scan.status === "running" && scan.attached && updatedAgo > STALL_TIMEOUT;
+
+  // One clear next step, then the rest.
+  const next: Action[] = [];
+  if (fresh) {
+    next.push({ key: "start", label: "Scan my X posts", icon: Play, run: () => start("continue"), disabled: !signedIn });
+  } else if (active) {
+    next.push({ key: "pause", label: "Pause", icon: Pause, run: () => run("pause") });
+    if (scan.status === "cooldown") next.push({ key: "now", label: "Try now", icon: Play, run: () => start("continue") });
+  } else {
+    const publishable = !!scan?.songs && (scan.unpublished > 0 || scan.status === "done");
+    const more = !scan?.complete;
+    const publishAction: Action = {
+      key: "publish",
+      label: session ? `Publish ${fmt(scan!.unpublished || scan!.songs)} songs` : "Sign in & publish",
+      icon: UploadCloud,
+      run: publish,
+    };
+    const continueAction: Action = { key: "continue", label: "Continue scanning", icon: History, run: () => start("continue") };
+    // Signed out inside the frame: a normal tab still has the X sign-in.
+    if (scan?.status === "error" && scan.target === "frame") {
+      next.push({ key: "tab", label: "Scan in an X tab", icon: ExternalLink, run: () => start("continue", "tab") });
+    }
+    if (scan?.status === "done" && publishable) next.push(publishAction);
+    if (more) next.push(continueAction);
+    if (scan?.status !== "done" && publishable) next.push(publishAction);
+    if (scan?.newest) next.push({ key: "new", label: "Check for new posts", icon: RefreshCw, run: () => start("new") });
+  }
 
   return (
     <Card>
-      {!scan || scan.status === "idle" ? (
-        <Intro signedIn={signedIn} />
-      ) : (
-        <ScanView scan={scan} />
-      )}
+      {fresh ? <Intro signedIn={signedIn} /> : <ScanView scan={scan!} />}
 
-      {error && (
-        <p role="alert" className="mt-5 rounded-2xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
-          {error}
-        </p>
+      {error && <Alert tone="error">{error}</Alert>}
+      {elsewhere && (
+        <Alert>
+          The scan is running in another Feedbeat tab. Keep that tab open, or{" "}
+          <button className="font-semibold text-primary hover:underline" disabled={busy} onClick={() => start("continue")}>
+            move it here
+          </button>
+          .
+        </Alert>
+      )}
+      {notLoading && (
+        <Alert>
+          {inFrame ? "X isn't loading inside this page." : "Your X tab hasn't started yet."}{" "}
+          <button className="font-semibold text-primary hover:underline" disabled={busy} onClick={() => start("continue", "tab")}>
+            Scan in an X tab instead
+          </button>
+        </Alert>
+      )}
+      {stalled && (
+        <Alert>
+          No progress for a minute.{" "}
+          <button className="font-semibold text-primary hover:underline" disabled={busy} onClick={() => start("continue")}>
+            Restart here
+          </button>{" "}
+          (nothing collected is lost).
+        </Alert>
       )}
 
       <div className="mt-6 flex flex-wrap gap-2">
-        {active ? (
-          <>
-            <Button size="lg" variant="outline" disabled={busy} onClick={() => run("pause")}>
-              <Pause /> Pause
-            </Button>
-            {scan.status === "cooldown" && (
-              <Button size="lg" variant="ghost" disabled={busy} onClick={() => start("continue")}>
-                <Play /> Try now
-              </Button>
-            )}
-          </>
-        ) : (
-          <>
-            {canPublish && (
-              <Button size="lg" variant="gradient" disabled={busy} onClick={publish}>
-                <UploadCloud />
-                {session ? `Publish ${fmt(scan.songs)} songs` : "Sign in & publish"}
-              </Button>
-            )}
-            {!scan?.scanned ? (
-              <Button size="lg" variant={canPublish ? "outline" : "gradient"} disabled={busy || !signedIn} onClick={() => start("continue")}>
-                <Play /> Start scanning my posts
-              </Button>
-            ) : !scan.complete ? (
-              <Button size="lg" variant="outline" disabled={busy} onClick={() => start("continue")}>
-                <History /> Continue older posts
-              </Button>
-            ) : null}
-            {!!scan?.newest && (
-              <Button size="lg" variant="outline" disabled={busy} onClick={() => start("new")}>
-                <RefreshCw /> Check for new posts
-              </Button>
-            )}
-            {!!scan && scan.status !== "idle" && (
-              <Button
-                size="lg"
-                variant="ghost"
-                disabled={busy}
-                onClick={() => confirm("Forget everything collected so far? Songs you already published stay on Feedbeat.") && run("reset")}
-              >
-                <RotateCcw /> Start over
-              </Button>
-            )}
-          </>
+        {next.map((a, i) => (
+          <Button key={a.key} size="lg" variant={i === 0 ? "gradient" : "outline"} disabled={busy || a.disabled} onClick={a.run}>
+            <a.icon /> {a.label}
+          </Button>
+        ))}
+        {!fresh && !active && (
+          <Button
+            size="lg"
+            variant="ghost"
+            disabled={busy}
+            onClick={() => confirm("Forget everything collected so far? Songs you already published stay on Feedbeat.") && run("reset")}
+          >
+            <RotateCcw /> Start over
+          </Button>
         )}
       </div>
+      {fresh && signedIn && (
+        <p className="mt-3 text-sm text-muted-foreground">
+          Prefer your own X tab?{" "}
+          <button className="font-medium text-primary hover:underline" disabled={busy} onClick={() => start("continue", "tab")}>
+            Scan in an X tab
+          </button>
+        </p>
+      )}
+
+      {showFrame && <ScanFrame key={scan.runId} src={scan.scanUrl} />}
+      {active && !inFrame && (
+        <p className="mt-5 flex items-center gap-2 rounded-2xl bg-muted p-4 text-sm">
+          <ExternalLink className="size-4 shrink-0" />
+          Scanning in your X tab. Keep it in front; this page follows along and you can pause from here.
+        </p>
+      )}
 
       <p className="mt-5 flex items-start gap-2 text-sm text-muted-foreground">
         <Lock className="mt-0.5 size-4 shrink-0" />
@@ -155,27 +196,82 @@ export function ExtensionImport() {
   );
 }
 
+interface Action {
+  key: string;
+  label: string;
+  icon: React.ComponentType;
+  run: () => unknown;
+  disabled?: boolean;
+}
+
+/** Re-render every `ms` so time-based hints (stuck scans) appear. */
+function useNow(ms: number) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), ms);
+    return () => clearInterval(id);
+  }, [ms]);
+  return now;
+}
+
+/**
+ * X, running inside this page. The extension drives it; the frame only has to
+ * stay on screen, because X loads more posts only while it's visible.
+ * `src` is read once per run: the scan moves the frame along by itself.
+ */
+function ScanFrame({ src }: { src: string }) {
+  const [initial] = useState(src);
+  return (
+    <figure className="mt-6">
+      <iframe
+        src={initial}
+        title="X, scanning your posts"
+        referrerPolicy="no-referrer"
+        className="h-[70vh] min-h-[420px] w-full rounded-2xl border border-border bg-background"
+      />
+      <figcaption className="mt-2 text-xs text-muted-foreground">
+        This is X, scrolling through your posts by itself. Keep this tab in front until it&apos;s done; you can pause any time.
+      </figcaption>
+    </figure>
+  );
+}
+
 function Card({ className, ...props }: React.ComponentProps<"div">) {
   return <div className={cn("mt-10 rounded-3xl border border-border bg-card p-6 sm:p-8", className)} {...props} />;
+}
+
+function Alert({ tone, children }: { tone?: "error"; children: React.ReactNode }) {
+  return (
+    <p
+      role={tone === "error" ? "alert" : "status"}
+      className={cn(
+        "mt-5 flex items-start gap-2 rounded-2xl border p-4 text-sm",
+        tone === "error" ? "border-destructive/30 bg-destructive/5 text-destructive" : "border-amber-500/30 bg-amber-500/5",
+      )}
+    >
+      <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+      <span>{children}</span>
+    </p>
+  );
 }
 
 function Intro({ signedIn }: { signedIn: boolean }) {
   return (
     <>
-      <p className="font-display text-2xl font-bold">Scan your X posts for music</p>
+      <p className="font-display text-2xl font-bold">Find every song you&apos;ve posted on X</p>
       <ol className="mt-4 space-y-2 text-sm text-muted-foreground">
-        <li>1. A small X window opens and reads your posts that contain links, newest first, back to your very first post.</li>
-        <li>2. Keep that window on screen. X only loads posts while it&apos;s visible. Progress shows up here live.</li>
-        <li>3. Pause any time, even close the browser: it continues where it left off. Publish whenever you like.</li>
+        <li>1. X opens right here and scrolls through your posts with links, newest first, back to your very first post.</li>
+        <li>2. Keep this tab in front while it works. Songs show up as they&apos;re found.</li>
+        <li>3. Pause or close it any time: it continues where it stopped. Publish whenever you like.</li>
       </ol>
       {!signedIn && (
-        <p className="mt-4 rounded-2xl bg-muted p-4 text-sm">
+        <Alert>
           Sign in to{" "}
-          <a href="https://x.com/login" target="_blank" rel="noopener noreferrer" className="font-medium text-primary hover:underline">
+          <a href="https://x.com/login" target="_blank" rel="noopener noreferrer" className="font-semibold text-primary hover:underline">
             X
           </a>{" "}
-          in this browser first, then reload this page.
-        </p>
+          in this browser first, then come back here.
+        </Alert>
       )}
     </>
   );
@@ -186,19 +282,17 @@ function ScanView({ scan }: { scan: ScanSummary }) {
   return (
     <>
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="truncate font-display text-xl font-bold">@{scan.handle ?? "…"}</p>
+        <p className="truncate font-display text-xl font-bold">{scan.handle ? `@${scan.handle}` : "Your X posts"}</p>
         <StatusPill scan={scan} />
       </div>
 
       <dl className="mt-5 grid grid-cols-3 gap-3">
         <Stat label="songs found" value={fmt(scan.songs)} />
         <Stat label="posts read" value={fmt(scan.scanned)} />
-        <Stat label={scan.complete ? "first post" : "reached"} value={scan.oldest ? month(scan.oldest) : "—"} />
+        <Stat label={scan.complete ? "back to" : "reached"} value={scan.oldest ? month(scan.oldest) : "—"} />
       </dl>
 
-      {scan.status === "running" && <Progress value={1} className="mt-5 animate-pulse" label="Scanning" />}
-
-      <p className={cn("mt-4 text-sm", scan.status === "error" ? "text-destructive" : "text-muted-foreground")}>{describe(scan)}</p>
+      <p className={cn("mt-4 text-sm", scan.status === "error" ? "font-medium text-destructive" : "text-muted-foreground")}>{describe(scan)}</p>
 
       {platforms.length > 0 && (
         <ul className="mt-4 flex flex-wrap gap-2">
@@ -210,31 +304,30 @@ function ScanView({ scan }: { scan: ScanSummary }) {
           ))}
         </ul>
       )}
-
-      {scan.songs > 0 && scan.unpublished > 0 && scan.unpublished < scan.songs && (
-        <p className="mt-3 text-sm font-medium text-primary">{fmt(scan.unpublished)} new since your last publish.</p>
-      )}
     </>
   );
 }
 
 function describe(scan: ScanSummary): string {
   if (scan.message && scan.status !== "done") return scan.message;
+  const published = scan.songs - scan.unpublished;
+  const unpublishedNote = published > 0 && scan.unpublished > 0 ? ` ${fmt(scan.unpublished)} not published yet.` : "";
   switch (scan.status) {
     case "running":
+      if (!scan.handle) return "Opening X…";
       return scan.mode === "new"
         ? "Looking for posts newer than your last scan…"
         : scan.oldest
           ? `Reading your posts from ${month(scan.oldest)} and earlier…`
-          : "Opening your posts…";
+          : "Reading your latest posts…";
     case "cooldown":
-      return "X asked us to slow down. The scan continues automatically.";
+      return "X asked us to slow down. The scan continues by itself in a few minutes.";
     case "paused":
-      return scan.oldest ? `Paused at ${month(scan.oldest)}. Continue any time; nothing is lost.` : "Paused.";
+      return `${scan.oldest ? `Paused at ${month(scan.oldest)}.` : "Paused."} Continue any time; nothing is lost.${unpublishedNote}`;
     case "done":
       return scan.complete
-        ? "Your whole history is scanned. Publish, or check back later for new posts."
-        : "Up to date. Older posts are still waiting: continue whenever you like.";
+        ? `Your whole history is scanned.${unpublishedNote} Come back any time to check for new posts.`
+        : `You're up to date with your latest posts. Older ones are still waiting.${unpublishedNote}`;
     default:
       return "";
   }
