@@ -8,7 +8,7 @@ export interface TrackMeta {
 }
 
 const EMPTY: TrackMeta = { title: null, artist: null, thumbnailUrl: null };
-const UA = "Mozilla/5.0 (compatible; FeedbeatBot/1.0; +https://feedbeat.app/about)";
+const UA = "Mozilla/5.0 (compatible; FeedbeatBot/1.0; +https://feedbeat-nine.vercel.app/about)";
 
 async function getJson<T>(url: string): Promise<T | null> {
   try {

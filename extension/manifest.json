@@ -4,12 +4,12 @@
   "version": "0.1.0",
   "description": "Collects the music links from your own X posts and sends them to Feedbeat. Runs only when you click.",
   "permissions": ["cookies", "storage"],
-  "host_permissions": ["https://x.com/*", "https://feedbeat.app/*", "http://localhost:3000/*"],
+  "host_permissions": ["https://x.com/*", "https://feedbeat-nine.vercel.app/*", "http://localhost:3000/*"],
   "background": { "service_worker": "background.js" },
   "content_scripts": [
     { "matches": ["https://x.com/*"], "js": ["lib.js", "collect.js"], "run_at": "document_idle" },
     {
-      "matches": ["https://feedbeat.app/import/extension*", "http://localhost:3000/import/extension*"],
+      "matches": ["https://feedbeat-nine.vercel.app/import/extension*", "http://localhost:3000/import/extension*"],
       "js": ["lib.js", "bridge.js"],
       "run_at": "document_idle"
     }
