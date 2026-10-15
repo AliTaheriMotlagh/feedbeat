@@ -14,6 +14,7 @@ importScripts("lib.js");
 
 const L = self.FeedbeatLib;
 const KEY = "scan";
+const SITE_KEY = "site"; // origin of the Feedbeat site that last used the extension
 const RESUME_ALARM = "feedbeat-resume";
 const IMPORT_PATH = "/import/extension";
 const FRAME_RULE_ID = 1;
@@ -48,6 +49,37 @@ async function currentAccountId() {
 
 const newRunId = () => crypto.randomUUID();
 
+/* ---------------------------------- Site ---------------------------------- */
+
+/** Note which site is talking to us, so a finished scan goes back to it: a dev server on any port, a new domain. */
+async function rememberSite(url) {
+  const origin = new URL(url).origin;
+  const { [SITE_KEY]: known } = await chrome.storage.local.get(SITE_KEY);
+  if (known !== origin) await chrome.storage.local.set({ [SITE_KEY]: origin });
+}
+
+/** The site that last used the extension, if this build still allows it, else the production default. */
+async function siteOrigin() {
+  const { [SITE_KEY]: origin } = await chrome.storage.local.get(SITE_KEY);
+  return origin && L.isSiteUrl(`${origin}${IMPORT_PATH}`) ? origin : L.defaultSiteUrl();
+}
+
+/**
+ * Bring the Feedbeat import page to the front, opening it when it isn't open. A
+ * page that is open already publishes by itself (it watches the scan finish), so
+ * only a freshly opened one needs `?publish`.
+ */
+async function openSite({ publish = false } = {}) {
+  const origin = await siteOrigin();
+  const open = (await chrome.tabs.query({ url: L.sitePatterns() })).find((t) => t.url && new URL(t.url).origin === origin);
+  if (open) {
+    await chrome.tabs.update(open.id, { active: true });
+    await chrome.windows.update(open.windowId, { focused: true });
+    return;
+  }
+  await chrome.tabs.create({ url: `${origin}${IMPORT_PATH}${publish ? "?publish" : ""}` });
+}
+
 /* ------------------------------- Commands --------------------------------- */
 
 /**
@@ -70,9 +102,8 @@ async function start(kind, where) {
     } else if (!resumable) {
       // A finished history only has newer posts left to find.
       if (s.complete && s.newest) Object.assign(s, { mode: "new", since: L.dayOf(s.newest), until: null });
-      // An unfinished profile pass starts again at the top; a search re-reads the oldest day reached. Posts already seen are skipped.
-      else if (s.phase === "profile") Object.assign(s, { mode: "all", since: null, until: null });
-      else Object.assign(s, { mode: "all", phase: "search", since: null, until: s.oldest ? L.addDays(L.dayOf(s.oldest), 1) : null });
+      // An unfinished history carries on from the oldest day reached; it never starts the profile over (see continueHistory).
+      else L.continueHistory(s);
     }
     return Object.assign(s, {
       status: "running",
@@ -215,20 +246,13 @@ async function onFinished(scan) {
     await chrome.tabs.update(back.id, { active: true });
     await chrome.windows.update(back.windowId, { focused: true });
   } else {
-    // ?publish: the page imports the songs as soon as it opens.
-    await chrome.tabs.create({ url: `${L.SITE_URL}${IMPORT_PATH}?publish` });
+    await openSite({ publish: true });
   }
 }
 
 /* ------------------------------- Messaging -------------------------------- */
 
-const isSite = (sender) => {
-  try {
-    return sender.frameId === 0 && L.SITE_ORIGINS.includes(new URL(sender.url).origin);
-  } catch {
-    return false;
-  }
-};
+const isSite = (sender) => sender.tab != null && sender.frameId === 0 && L.isSiteUrl(sender.url);
 const isPopup = (sender) => sender.url?.startsWith(`chrome-extension://${chrome.runtime.id}/`) ?? false;
 const isX = (sender) => sender.tab != null && sender.url?.startsWith(`${L.X_ORIGIN}/`);
 
@@ -246,7 +270,7 @@ const HANDLERS = {
   "feedbeat:start": { from: [isSite, isPopup], run: async (p, s) => ({ state: await start(p?.kind ?? "continue", whereFor(p, s)) }) },
   "feedbeat:pause": { from: [isSite, isPopup], run: async () => ({ state: await pause() }) },
   "feedbeat:reset": { from: [isSite, isPopup], run: async () => ({ state: await reset() }) },
-  "feedbeat:open-site": { from: [isPopup], run: async () => (await chrome.tabs.create({ url: `${L.SITE_URL}${IMPORT_PATH}` }), {}) },
+  "feedbeat:open-site": { from: [isPopup], run: async (p) => (await openSite({ publish: !!p?.publish }), {}) },
   "feedbeat:batch": { from: [isSite], run: async () => ({ batch: await buildBatch() }) },
   "feedbeat:published": {
     from: [isSite],
@@ -263,6 +287,7 @@ const HANDLERS = {
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   const handler = HANDLERS[msg?.type];
   if (!handler || !handler.from.some((ok) => ok(sender))) return false;
+  if (isSite(sender)) rememberSite(sender.url).catch(() => {});
   handler.run(msg.payload, sender).then(
     (data) => sendResponse({ ok: true, ...data }),
     (err) => sendResponse({ ok: false, error: err?.message ?? "Something went wrong." }),
@@ -282,9 +307,12 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name !== RESUME_ALARM) return;
-  const scan = await update((s) =>
-    s?.status === "cooldown" ? Object.assign(s, { status: "running", runId: newRunId(), message: null, resumeAt: null, attached: false }) : undefined,
-  );
+  const scan = await update((s) => {
+    if (s?.status !== "cooldown") return undefined;
+    // Like any other continue: pick up where the history got to, not at the top of the profile again.
+    if (s.mode === "all") L.continueHistory(s);
+    return Object.assign(s, { status: "running", runId: newRunId(), message: null, resumeAt: null, attached: false });
+  });
   // A frame scan restarts when the page sees the new run; a tab scan is reloaded here.
   if (scan?.status === "running" && scan.target === "tab") await showTab(scan).catch(() => pause());
 });

@@ -24,11 +24,16 @@
     if (event.source !== window || event.data?.source !== "feedbeat-page") return;
     const { id, type, payload } = event.data;
     if (!COMMANDS[type]) return;
-    const res = await chrome.runtime.sendMessage({ type: COMMANDS[type], payload }).catch((err) => ({
-      ok: false,
-      // After an update this old copy of the script is cut off from the extension.
-      error: /context invalidated/i.test(err?.message ?? "") ? "The extension was updated. Reload this page." : (err?.message ?? "Extension error."),
-    }));
+    let res;
+    try {
+      res = await chrome.runtime.sendMessage({ type: COMMANDS[type], payload });
+    } catch (err) {
+      // After an update this old copy of the script is cut off from the extension; Chrome throws right here instead of rejecting.
+      res = {
+        ok: false,
+        error: /context invalidated/i.test(err?.message ?? "") ? "The extension was updated. Reload this page." : (err?.message ?? "Extension error."),
+      };
+    }
     post({ type: "reply", id, ...(res ?? { ok: false, error: "No answer from the extension." }) });
   });
 

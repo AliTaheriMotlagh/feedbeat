@@ -6,10 +6,58 @@
 (function (root) {
   "use strict";
 
-  // Keep in sync with host_permissions and content_scripts in manifest.json.
-  const SITE_ORIGINS = ["https://feedbeat-nine.vercel.app", "http://localhost:3000"];
-  const SITE_URL = SITE_ORIGINS[0];
   const X_ORIGIN = "https://x.com";
+
+  /* ------------------------------------------------------------------------ */
+  /*                          Where the Feedbeat site is                        */
+  /* ------------------------------------------------------------------------ */
+
+  // The manifest is the one list of sites: bridge.js runs on exactly the pages its
+  // content_scripts entry matches, and the service worker only listens to those.
+  // (Two hand-kept copies of the list is how a moved domain or a dev server on another
+  // port ended up looking like "extension not installed".)
+
+  /** Match patterns of the pages that run bridge.js. Empty outside the extension. */
+  function sitePatterns() {
+    const manifest = root.chrome?.runtime?.getManifest?.();
+    return manifest?.content_scripts?.find((cs) => cs.js?.includes("bridge.js"))?.matches ?? [];
+  }
+
+  /**
+   * Does `url` match a Chrome match pattern like "https://host/path*"? Same rules
+   * as the browser: "*" scheme means http or https, a host may be "*.domain", a
+   * pattern without a port matches every port, and the path (with its query) is a glob.
+   */
+  function matchesPattern(url, pattern) {
+    let u;
+    try {
+      u = new URL(url);
+    } catch {
+      return false;
+    }
+    const m = /^(\*|https?):\/\/([^/:]+)(?::(\d+))?(\/.*)$/.exec(pattern);
+    if (!m) return false;
+    const [, scheme, host, port, path] = m;
+    if (scheme === "*" ? !/^https?:$/.test(u.protocol) : `${scheme}:` !== u.protocol) return false;
+    if (host.startsWith("*.") ? !(u.hostname === host.slice(2) || u.hostname.endsWith(host.slice(1))) : host !== "*" && host !== u.hostname) return false;
+    if (port && port !== (u.port || (u.protocol === "https:" ? "443" : "80"))) return false;
+    const escape = (s) => s.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`^${path.split("*").map(escape).join(".*")}$`).test(u.pathname + u.search);
+  }
+
+  /** Is this page one the bridge runs on? */
+  function isSiteUrl(url, patterns = sitePatterns()) {
+    return patterns.some((p) => matchesPattern(url, p));
+  }
+
+  /** "https://host" for the first pattern that names one host: where to send people when nothing says otherwise. */
+  function defaultSiteUrl(patterns = sitePatterns()) {
+    for (const p of patterns) {
+      const m = /^(https?:\/\/[^/*]+)\//.exec(p);
+      if (m) return m[1];
+    }
+    return null;
+  }
 
   // Pre-filter only: the server re-parses every link with its own rules.
   // host → platform id ("link" = short or smart link, resolved on the server).
@@ -185,6 +233,23 @@
     return { tweets, profile };
   }
 
+  /**
+   * Did this timeline response carry no posts at all, whoever wrote them? The last page of
+   * a timeline is only cursors, so that is how the end shows up without waiting for more.
+   */
+  function hasNoPosts(json) {
+    const visited = new Set();
+    function walk(node, depth) {
+      if (!isObj(node) || depth > 60 || visited.has(node)) return false;
+      visited.add(node);
+      if (Array.isArray(node)) return node.some((child) => walk(child, depth + 1));
+      if (typeof node.__typename === "string" && node.__typename.startsWith("Tweet")) return true;
+      for (const key in node) if (walk(node[key], depth + 1)) return true;
+      return false;
+    }
+    return !walk(json, 0);
+  }
+
   /* ------------------------------------------------------------------------ */
   /*                             Search windowing                              */
   /* ------------------------------------------------------------------------ */
@@ -241,6 +306,21 @@
   /* ------------------------------------------------------------------------ */
   /*                               Scan state                                  */
   /* ------------------------------------------------------------------------ */
+
+  /**
+   * Point a history scan at where it picks up after an interruption (cooldown, pause, error, closed tab).
+   * The profile timeline can only be read from the top, and every page of it costs the same rate-limited
+   * request as the first, so starting it over would spend the whole allowance re-reading posts we already
+   * have, and a long history would never get past that point. A search can start on any day, so carry on
+   * from the oldest post reached (that day is read again; duplicates are skipped).
+   */
+  function continueHistory(scan) {
+    scan.mode = "all";
+    scan.since = null;
+    scan.until = scan.oldest ? addDays(dayOf(scan.oldest), 1) : null;
+    if (scan.oldest) scan.phase = "search";
+    return scan;
+  }
 
   /** A fresh scan for the account. */
   function newScan(accountId) {
@@ -336,9 +416,11 @@
   }
 
   root.FeedbeatLib = {
-    SITE_URL,
-    SITE_ORIGINS,
     X_ORIGIN,
+    sitePatterns,
+    matchesPattern,
+    isSiteUrl,
+    defaultSiteUrl,
     platformOf,
     isMusicUrl,
     musicUrlsInText,
@@ -346,6 +428,7 @@
     toUrl,
     accountIdFromTwid,
     tweetsFromGraphql,
+    hasNoPosts,
     dayOf,
     addDays,
     searchUrl,
@@ -353,6 +436,7 @@
     onProfile,
     scanUrl,
     nextUntil,
+    continueHistory,
     newScan,
     mergeTweets,
     summarize,

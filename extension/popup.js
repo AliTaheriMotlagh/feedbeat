@@ -61,7 +61,7 @@ async function send(type, payload) {
 $("start").addEventListener("click", () => send("feedbeat:start", { kind: "continue" }));
 $("new").addEventListener("click", () => send("feedbeat:start", { kind: "new" }));
 $("pause").addEventListener("click", () => send("feedbeat:pause"));
-$("site").addEventListener("click", () => send("feedbeat:open-site").then(() => window.close()));
+$("site").addEventListener("click", () => send("feedbeat:open-site", { publish: !!last[0]?.unpublished }).then(() => window.close()));
 $("reset").addEventListener("click", () => {
   if (confirm("Forget everything collected so far? Songs already published stay on Feedbeat.")) send("feedbeat:reset");
 });

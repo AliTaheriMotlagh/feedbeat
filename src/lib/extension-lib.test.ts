@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import manifest from "../../extension/manifest.json";
 // Classic script: importing it runs it and attaches the helpers to globalThis.
 import "../../extension/lib.js";
 
@@ -24,6 +25,9 @@ interface Scan {
   status: string;
 }
 interface Lib {
+  matchesPattern(url: string, pattern: string): boolean;
+  isSiteUrl(url: string, patterns?: string[]): boolean;
+  defaultSiteUrl(patterns?: string[]): string | null;
   isMusicUrl(raw: string): boolean;
   platformOf(raw: string): string | null;
   toUrl(text: string | null | undefined): string | null;
@@ -31,6 +35,8 @@ interface Lib {
   musicUrlsInText(text: string | null | undefined): string[];
   dropTruncated(urls: string[]): string[];
   tweetsFromGraphql(json: unknown, accountId: string): { tweets: Tweet[]; profile: Record<string, string | null> | null };
+  hasNoPosts(json: unknown): boolean;
+  continueHistory(scan: Scan): Scan;
   searchUrl(handle: string, opts?: { until?: string | null; since?: string | null }): string;
   nextUntil(oldestIso: string, prevUntil: string | null): string;
   scanUrl(scan: Scan): string;
@@ -39,6 +45,76 @@ interface Lib {
   summarize(scan: Scan | null): { songs: number; unpublished: number; platforms: Record<string, number> } | null;
 }
 const lib = (globalThis as unknown as { FeedbeatLib: Lib }).FeedbeatLib;
+
+describe("extension match patterns", () => {
+  it("matches the path and query like the browser does", () => {
+    const p = "https://feedbeat.example/import/extension*";
+    expect(lib.matchesPattern("https://feedbeat.example/import/extension", p)).toBe(true);
+    expect(lib.matchesPattern("https://feedbeat.example/import/extension?publish", p)).toBe(true);
+    expect(lib.matchesPattern("https://feedbeat.example/import", p)).toBe(false);
+    expect(lib.matchesPattern("https://feedbeat.example/u/me/import/extension", p)).toBe(false);
+  });
+
+  it("takes the scheme and host literally, so lookalikes don't match", () => {
+    const p = "https://feedbeat.example/import/extension*";
+    expect(lib.matchesPattern("http://feedbeat.example/import/extension", p)).toBe(false);
+    expect(lib.matchesPattern("https://feedbeat.example.evil.net/import/extension", p)).toBe(false);
+    expect(lib.matchesPattern("https://evilfeedbeat.example/import/extension", p)).toBe(false);
+    expect(lib.matchesPattern("not a url", p)).toBe(false);
+  });
+
+  it("matches every port unless the pattern names one", () => {
+    const any = "http://localhost/import/extension*";
+    expect(lib.matchesPattern("http://localhost:3000/import/extension", any)).toBe(true);
+    expect(lib.matchesPattern("http://localhost:3456/import/extension", any)).toBe(true);
+    expect(lib.matchesPattern("http://localhost/import/extension", any)).toBe(true);
+    const pinned = "http://localhost:3000/import/extension*";
+    expect(lib.matchesPattern("http://localhost:3000/import/extension", pinned)).toBe(true);
+    expect(lib.matchesPattern("http://localhost:3456/import/extension", pinned)).toBe(false);
+  });
+
+  it("supports *.domain hosts", () => {
+    const p = "https://*.example.com/*";
+    expect(lib.matchesPattern("https://a.example.com/x", p)).toBe(true);
+    expect(lib.matchesPattern("https://example.com/x", p)).toBe(true);
+    expect(lib.matchesPattern("https://badexample.com/x", p)).toBe(false);
+  });
+});
+
+describe("extension site list (manifest.json)", () => {
+  const bridge = manifest.content_scripts.find((cs) => cs.js.includes("bridge.js"))!;
+  const patterns = bridge.matches;
+
+  // These two broke the extension before: it only knew a renamed Vercel domain and localhost:3000.
+  it("runs the bridge on the production site", () => {
+    expect(lib.isSiteUrl("https://feedbeat-free.vercel.app/import/extension?publish", patterns)).toBe(true);
+  });
+
+  it("runs the bridge on a dev server whatever port it ends up on", () => {
+    for (const port of [3000, 3001, 3456]) {
+      expect(lib.isSiteUrl(`http://localhost:${port}/import/extension`, patterns)).toBe(true);
+      expect(lib.isSiteUrl(`http://127.0.0.1:${port}/import/extension`, patterns)).toBe(true);
+    }
+  });
+
+  it("stays off every other page and site", () => {
+    expect(lib.isSiteUrl("https://feedbeat-free.vercel.app/import", patterns)).toBe(false);
+    expect(lib.isSiteUrl("https://feedbeat-free.vercel.app.evil.net/import/extension", patterns)).toBe(false);
+    expect(lib.isSiteUrl("https://x.com/import/extension", patterns)).toBe(false);
+    expect(lib.isSiteUrl("chrome-extension://abc/popup.html", patterns)).toBe(false);
+  });
+
+  it("sends people to the production site when nothing says otherwise", () => {
+    expect(lib.defaultSiteUrl(patterns)).toBe("https://feedbeat-free.vercel.app");
+  });
+
+  it("lets the extension host-access every site it runs on", () => {
+    for (const pattern of patterns) {
+      const origin = pattern.replace(/\/import\/extension\*$/, "");
+      expect(manifest.host_permissions).toContain(`${origin}/*`);
+    }
+  });
+});
 
 describe("extension isMusicUrl", () => {
   it("accepts music hosts and their subdomains", () => {
@@ -236,6 +312,52 @@ describe("extension scan pages", () => {
       ["1", true],
       ["2", false],
     ]);
+  });
+});
+
+describe("extension continueHistory", () => {
+  const scan = (over: Partial<Scan>) => Object.assign(lib.newScan("42"), { handle: "me" }, over);
+
+  // Starting the profile over after every rate-limit pause re-read the same pages each time and never got any further.
+  it("carries on from the oldest day reached instead of reading the profile again", () => {
+    const s = lib.continueHistory(scan({ phase: "profile", oldest: "2026-05-05T10:00:00.000Z" }));
+    expect([s.mode, s.phase, s.since, s.until]).toEqual(["all", "search", null, "2026-05-06"]);
+    expect(new URL(lib.scanUrl(s)).searchParams.get("q")).toBe("from:me filter:links until:2026-05-06");
+  });
+
+  it("keeps reading the profile when nothing has been read yet", () => {
+    const s = lib.continueHistory(scan({ phase: "profile", oldest: null }));
+    expect([s.phase, s.until]).toEqual(["profile", null]);
+    expect(lib.scanUrl(s)).toBe("https://x.com/me/with_replies");
+  });
+
+  it("resumes a search from the oldest post reached, not from the window it started in", () => {
+    const s = lib.continueHistory(scan({ phase: "search", until: "2026-09-01", oldest: "2026-07-15T00:00:00.000Z" }));
+    expect(s.until).toBe("2026-07-16");
+  });
+
+  it("drops a leftover lower bound", () => {
+    expect(lib.continueHistory(scan({ since: "2026-01-01", oldest: "2026-07-15T00:00:00.000Z" })).since).toBeNull();
+  });
+});
+
+describe("extension hasNoPosts", () => {
+  const page = (...entries: unknown[]) => ({ data: { timeline: { instructions: [{ type: "TimelineAddEntries", entries }] } } });
+  const cursor = (type: string) => ({ entryId: `cursor-${type}`, content: { entryType: "TimelineTimelineCursor", cursorType: type, value: "abc" } });
+  const item = (result: unknown) => ({ entryId: "tweet-1", content: { itemContent: { tweet_results: { result } } } });
+
+  it("is true for the last page of a timeline: only cursors", () => {
+    expect(lib.hasNoPosts(page(cursor("Top"), cursor("Bottom")))).toBe(true);
+    expect(lib.hasNoPosts({})).toBe(true);
+  });
+
+  it("is false when a post is on the page, whoever wrote it", () => {
+    expect(lib.hasNoPosts(page(item({ __typename: "Tweet", rest_id: "1", legacy: { user_id_str: "7" } }), cursor("Bottom")))).toBe(false);
+  });
+
+  it("counts wrapped and deleted posts as posts, so a page of them isn't taken for the end", () => {
+    expect(lib.hasNoPosts(page(item({ __typename: "TweetWithVisibilityResults", tweet: { __typename: "Tweet" } })))).toBe(false);
+    expect(lib.hasNoPosts(page(item({ __typename: "TweetTombstone" })))).toBe(false);
   });
 });
 

@@ -1,12 +1,31 @@
 "use client";
 
-import { AlertTriangle, CheckCircle2, ExternalLink, History, Link2, Loader2, Lock, Pause, Play, Puzzle, RefreshCw, RotateCcw, UploadCloud } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  ExternalLink,
+  FileArchive,
+  History,
+  Link2,
+  Loader2,
+  Lock,
+  Monitor,
+  Pause,
+  Play,
+  Puzzle,
+  RefreshCw,
+  RotateCcw,
+  Smartphone,
+  UploadCloud,
+} from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { useSession } from "@/lib/auth-client";
+import { useExtensionSupport, type ExtensionSupport } from "@/lib/extension-support";
 import { publishImport } from "@/lib/import-client";
 import { isPlatformId, PLATFORMS } from "@/lib/platforms";
 import { useExtension, type ScanSummary, type StartKind, type StartTarget } from "@/lib/use-extension";
@@ -26,7 +45,8 @@ type Upload = { done: number; total: number } | null;
 
 /** Runs the Feedbeat Collector extension's scan right on this page, then publishes what it found. */
 export function ExtensionImport() {
-  const { status, scan, signedIn, here, command } = useExtension();
+  const { status, problem, scan, signedIn, here, command, recheck } = useExtension();
+  const support = useExtensionSupport();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [upload, setUpload] = useState<Upload>(null);
@@ -91,10 +111,13 @@ export function ExtensionImport() {
     publishIfWanted();
   }, [status]);
 
+  // Phones and Firefox/Safari can't run a Chrome extension: don't make them wait to be told to install one.
+  if (support && support !== "yes") return <Unsupported kind={support} />;
   if (status === "detecting") {
     return <p className="mt-10 text-center text-sm text-muted-foreground">Looking for the Feedbeat Collector extension…</p>;
   }
-  if (status === "missing") return <InstallSteps />;
+  if (status === "missing") return <Missing onCheckAgain={recheck} />;
+  if (status === "broken") return <Broken problem={problem} onCheckAgain={recheck} />;
 
   if (upload) {
     return (
@@ -394,23 +417,104 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
-function InstallSteps() {
+const IS_DEV = process.env.NODE_ENV !== "production";
+
+function ArchiveButton({ variant = "gradient" }: { variant?: "gradient" | "outline" }) {
+  return (
+    <Button asChild size="lg" variant={variant}>
+      <Link href="/import">
+        <FileArchive /> Import my X archive instead
+      </Link>
+    </Button>
+  );
+}
+
+/** A browser that can't run the extension: phones, Firefox, Safari. The archive works everywhere. */
+function Unsupported({ kind }: { kind: Exclude<ExtensionSupport, "yes"> }) {
+  const mobile = kind === "mobile";
+  const Icon = mobile ? Smartphone : Monitor;
+  return (
+    <div className="mt-10 rounded-3xl border border-border bg-card p-8 text-center">
+      <Icon className="mx-auto size-10 text-primary" />
+      <p className="mt-4 font-display text-xl font-bold">{mobile ? "Scanning from X needs a computer" : "Scanning from X needs Chrome, Edge or Brave"}</p>
+      <p className="mx-auto mt-3 max-w-md text-sm text-muted-foreground">
+        {mobile
+          ? "The Feedbeat Collector is a browser extension, and phone browsers can't run extensions."
+          : "The Feedbeat Collector is a Chrome extension, and this browser can't run it."}{" "}
+        You can still turn your whole X history into playlists from here: ask X for your archive (it&apos;s free), then choose the .zip. Nothing leaves
+        your {mobile ? "phone" : "browser"} except the music links.
+      </p>
+      <div className="mt-6 flex justify-center">
+        <ArchiveButton />
+      </div>
+    </div>
+  );
+}
+
+/** Desktop Chromium, but nothing answered: not installed, or not installed *for this address*. */
+function Missing({ onCheckAgain }: { onCheckAgain: () => void }) {
   return (
     <div className="mt-10 rounded-3xl border border-dashed border-border bg-card/60 p-8 text-center">
       <Puzzle className="mx-auto size-10 text-primary" />
-      <p className="mt-4 font-display text-xl font-bold">Install the Feedbeat Collector</p>
-      <ol className="mx-auto mt-4 max-w-sm space-y-1 text-left text-sm text-muted-foreground">
-        <li>1. Add the Feedbeat Collector extension to Chrome, Edge or Brave.</li>
-        <li>2. Sign in to X in the same browser.</li>
-        <li>3. Reload this page and start the scan right here.</li>
-      </ol>
-      {EXTENSION_URL && (
-        <Button asChild size="lg" variant="gradient" className="mt-6">
-          <a href={EXTENSION_URL} target="_blank" rel="noopener noreferrer">
-            <Puzzle /> Get the extension
-          </a>
+      <p className="mt-4 font-display text-xl font-bold">Feedbeat Collector not found</p>
+      {EXTENSION_URL ? (
+        <ol className="mx-auto mt-4 max-w-sm space-y-1 text-left text-sm text-muted-foreground">
+          <li>1. Add the Feedbeat Collector extension to Chrome, Edge or Brave.</li>
+          <li>2. Sign in to X in the same browser.</li>
+          <li>3. Reload this page and start the scan right here.</li>
+        </ol>
+      ) : IS_DEV ? (
+        <ol className="mx-auto mt-4 max-w-md space-y-1 text-left text-sm text-muted-foreground">
+          <li>
+            1. Open <code>chrome://extensions</code>, turn on Developer mode and choose <strong>Load unpacked</strong>.
+          </li>
+          <li>
+            2. Pick the <code>extension/</code> folder of this repo. It works on <code>localhost</code> and <code>127.0.0.1</code> at any port.
+          </li>
+          <li>3. Reload this page. Already loaded it? It only joins pages opened after it was loaded or reloaded.</li>
+        </ol>
+      ) : (
+        <p className="mx-auto mt-3 max-w-md text-sm text-muted-foreground">The extension isn&apos;t in the Chrome Web Store yet. Use your X archive in the meantime.</p>
+      )}
+      <div className="mt-6 flex flex-wrap justify-center gap-2">
+        {EXTENSION_URL && (
+          <Button asChild size="lg" variant="gradient">
+            <a href={EXTENSION_URL} target="_blank" rel="noopener noreferrer">
+              <Puzzle /> Get the extension
+            </a>
+          </Button>
+        )}
+        <Button size="lg" variant="outline" onClick={onCheckAgain}>
+          <RefreshCw /> Check again
         </Button>
+        {!EXTENSION_URL && !IS_DEV ? <ArchiveButton /> : null}
+      </div>
+      <p className="mt-5 text-xs text-muted-foreground">
+        Looked for it on <code>{typeof window === "undefined" ? "this page" : window.location.origin}</code>. The extension only runs on the sites it
+        lists, so an old copy that doesn&apos;t know this address won&apos;t be found even if it&apos;s installed.
+      </p>
+      {(EXTENSION_URL || IS_DEV) && (
+        <p className="mt-3 text-sm text-muted-foreground">
+          No extension? <Link href="/import" className="font-medium text-primary hover:underline">Import your X archive instead</Link>.
+        </p>
       )}
     </div>
+  );
+}
+
+/** The extension is on this page but couldn't help (usually: it was updated or reloaded after the page opened). */
+function Broken({ problem, onCheckAgain }: { problem: string | null; onCheckAgain: () => void }) {
+  return (
+    <Card>
+      <Alert tone="error">The Feedbeat Collector is installed but isn&apos;t answering{problem ? `: ${problem}` : "."}</Alert>
+      <div className="mt-6 flex flex-wrap gap-2">
+        <Button size="lg" variant="gradient" onClick={() => window.location.reload()}>
+          <RefreshCw /> Reload this page
+        </Button>
+        <Button size="lg" variant="outline" onClick={onCheckAgain}>
+          Check again
+        </Button>
+      </div>
+    </Card>
   );
 }

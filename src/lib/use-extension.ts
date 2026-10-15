@@ -34,48 +34,65 @@ export interface ScanSummary {
 
 type Reply =
   | { ok: true; state?: ScanSummary | null; signedIn?: boolean; tabId?: number | null; batch?: ImportPayload }
-  | { ok: false; error: string };
+  /** `timeout`: nothing answered at all (no extension on this page), as opposed to the extension answering with an error. */
+  | { ok: false; error: string; timeout?: boolean };
 
 export type StartKind = "continue" | "new" | "restart";
 /** frame: scan inside this page · tab: scan in an X tab */
 export type StartTarget = "frame" | "tab";
 
 const TIMEOUT = 20_000;
+/** How long the extension has to answer the first hello. */
+const DETECT_TIMEOUT = 2_500;
 
 /**
  * Talk to the extension through its bridge content script (extension/bridge.js).
- * `status` is "missing" when no extension answered. `here` is true when the
- * scan runs in this browser tab (its iframe).
+ * `status`:
+ *  - "missing": nothing answered, so no extension runs on this page. Not installed, or installed but
+ *    not allowed on this address (the extension only runs on the sites listed in its manifest).
+ *  - "broken": the extension is on this page but couldn't help; `problem` says why (e.g. it was updated, reload the page).
+ * `here` is true when the scan runs in this browser tab (its iframe).
  */
 export function useExtension() {
-  const [status, setStatus] = useState<"detecting" | "missing" | "ready">("detecting");
+  const [status, setStatus] = useState<"detecting" | "missing" | "broken" | "ready">("detecting");
+  const [problem, setProblem] = useState<string | null>(null);
   const [scan, setScan] = useState<ScanSummary | null>(null);
   const [signedIn, setSignedIn] = useState(true);
   const [tabId, setTabId] = useState<number | null>(null);
   const pending = useRef(new Map<string, (reply: Reply) => void>());
+  const lastId = useRef(0);
 
   const request = useCallback(
     (type: string, payload?: unknown) =>
       new Promise<Reply>((resolve) => {
-        const id = crypto.randomUUID();
+        // A counter, not crypto.randomUUID(): that is missing on plain-http addresses other than localhost (a phone opening the dev server).
+        const id = `r${++lastId.current}`;
         pending.current.set(id, resolve);
         window.postMessage({ source: "feedbeat-page", id, type, payload }, window.location.origin);
         setTimeout(() => {
-          if (pending.current.delete(id)) resolve({ ok: false, error: "The extension didn't answer. Reload this page and try again." });
+          if (pending.current.delete(id)) resolve({ ok: false, timeout: true, error: "The extension didn't answer. Reload this page and try again." });
         }, TIMEOUT);
       }),
     [],
   );
 
+  // Bumped by "Check again" to run the detection below once more.
+  const [attempt, setAttempt] = useState(0);
+
   useEffect(() => {
-    let active = true;
     async function hello() {
       const reply = await request("hello");
-      if (!active || !reply.ok) return;
-      setStatus("ready");
-      setScan(reply.state ?? null);
-      setSignedIn(reply.signedIn ?? true);
-      setTabId(reply.tabId ?? null);
+      if (reply.ok) {
+        setStatus("ready");
+        setProblem(null);
+        setScan(reply.state ?? null);
+        setSignedIn(reply.signedIn ?? true);
+        setTabId(reply.tabId ?? null);
+      } else if (!reply.timeout) {
+        // Something on this page answered, but it was an error: say why instead of calling the extension missing.
+        setProblem(reply.error);
+        setStatus((s) => (s === "ready" ? s : "broken"));
+      }
     }
     function onMessage(e: MessageEvent) {
       if (e.source !== window || e.data?.source !== "feedbeat-extension") return;
@@ -94,14 +111,21 @@ export function useExtension() {
     window.addEventListener("message", onMessage);
     window.addEventListener("focus", onFocus);
     void hello();
-    const timer = setTimeout(() => setStatus((s) => (s === "detecting" ? "missing" : s)), 2500);
+    // Nothing answered in a moment: no extension runs on this page.
+    const timer = setTimeout(() => setStatus((s) => (s === "detecting" ? "missing" : s)), DETECT_TIMEOUT);
     return () => {
-      active = false;
       window.removeEventListener("message", onMessage);
       window.removeEventListener("focus", onFocus);
       clearTimeout(timer);
     };
-  }, [request]);
+  }, [request, attempt]);
+
+  /** Look for the extension again (the "Check again" button). */
+  const recheck = useCallback(() => {
+    setStatus("detecting");
+    setProblem(null);
+    setAttempt((n) => n + 1);
+  }, []);
 
   /** Run a command; replies carrying a state update the view. Throws with the extension's message. */
   const command = useCallback(
@@ -115,5 +139,5 @@ export function useExtension() {
   );
 
   const here = scan?.tabId != null && scan.tabId === tabId;
-  return { status, scan, signedIn, here, command };
+  return { status, problem, scan, signedIn, here, command, recheck };
 }

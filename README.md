@@ -50,6 +50,12 @@ npm run dev
 
 Sign-in needs at least one provider (for example a GitHub OAuth app with callback `http://localhost:3000/api/auth/callback/github`). If `X_BEARER_TOKEN` is not set, handle scanning in development uses **deterministic demo timelines**. Archive import always works.
 
+Notes for development:
+
+- **Port:** if 3000 is busy Next picks the next free port. Email sign-in, the extension and archive import work on any localhost port. For GitHub/Google/X sign-in, set `BETTER_AUTH_URL` and `NEXT_PUBLIC_SITE_URL` to the URL you actually use (and use it in the OAuth app's callback).
+- **Phone:** open the "Network" URL `next dev` prints (for example `http://192.168.1.20:3000`) on a phone on the same Wi-Fi. `allowedDevOrigins` in `next.config.ts` covers the usual home-network ranges; add yours if it differs. Phones can't run the extension, so test the archive import there.
+- **Extension:** load `extension/` unpacked (see `extension/README.md`). It finds the site on any localhost port.
+
 ```bash
 npm test          # unit tests (link parser, archive + zip reader, levels, streaks, badges)
 npm run lint

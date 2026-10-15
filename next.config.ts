@@ -33,7 +33,8 @@ const csp = [
   "base-uri 'self'",
   "form-action 'self' https://x.com https://twitter.com https://accounts.spotify.com",
   "frame-ancestors 'none'",
-  "upgrade-insecure-requests",
+  // Not in dev: it would turn http://192.168.x.x/_next/… into https:// requests the dev server can't answer, so a phone on the same Wi-Fi gets a page that never loads its scripts. (localhost is exempt, which hides this on your own machine.)
+  ...(isDev ? [] : ["upgrade-insecure-requests"]),
 ].join("; ");
 
 const securityHeaders = [
@@ -46,6 +47,9 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  // Dev only. Next blocks its dev channel (HMR) for any host but "localhost", and then the page loads but never hydrates.
+  // This lets 127.0.0.1 and a phone on the same Wi-Fi (the "Network" URL `next dev` prints) through.
+  allowedDevOrigins: ["127.0.0.1", "192.168.*.*", "10.*.*.*", "*.local"],
   cacheComponents: true,
   partialPrefetching: true,
   reactStrictMode: true,

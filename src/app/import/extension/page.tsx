@@ -10,7 +10,7 @@ export const metadata: Metadata = {
 export default function ExtensionImportPage() {
   return (
     <div className="mx-auto max-w-3xl px-4 py-12 sm:px-6">
-      <p className="text-sm font-semibold text-primary">Free · Private · No archive needed</p>
+      <p className="text-sm font-semibold text-primary">Free · Private · No archive needed · Chrome, Edge or Brave on a computer</p>
       <h1 className="mt-2 font-display text-4xl font-extrabold tracking-tight text-balance sm:text-5xl">
         Every song you posted, <span className="text-gradient">straight from X</span>
       </h1>

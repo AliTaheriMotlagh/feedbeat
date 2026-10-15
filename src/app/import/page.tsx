@@ -56,11 +56,11 @@ export default function ImportPage() {
         <ArchiveImporter />
       </div>
       <p className="mt-4 text-sm text-muted-foreground">
-        Don&apos;t want to unzip anything? Use the{" "}
+        The archive works on any device, phones included. On a computer with Chrome, Edge or Brave you can skip the wait: the{" "}
         <a href="/import/extension" className="font-medium text-primary hover:underline">
           Feedbeat Collector extension
         </a>{" "}
-        to scan your posts straight from X instead.
+        scans your posts straight from X instead.
       </p>
 
       <JsonLd<HowTo>

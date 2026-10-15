@@ -23,9 +23,10 @@
     if (buffer.length > MAX_BUFFER) buffer.shift();
   }
 
-  function onResponse(url, status, readBody) {
+  /** `header(name)` reads a response header; X says when a rate-limit window resets in x-rate-limit-reset (epoch seconds). */
+  function onResponse(url, status, readBody, header) {
     if (!TIMELINES.test(url)) return;
-    if (status === 429) return post({ type: "ratelimit" });
+    if (status === 429) return post({ type: "ratelimit", reset: Number(header?.("x-rate-limit-reset")) || null });
     if (status !== 200) return;
     Promise.resolve()
       .then(readBody)
@@ -44,7 +45,7 @@
     const res = await origFetch.apply(this, args);
     try {
       const url = typeof args[0] === "string" ? args[0] : (args[0]?.url ?? String(args[0]));
-      onResponse(url, res.status, () => res.clone().text());
+      onResponse(url, res.status, () => res.clone().text(), (name) => res.headers.get(name));
     } catch {
       // Never break X.
     }
@@ -60,11 +61,16 @@
     if (TIMELINES.test(this.__feedbeatUrl ?? "")) {
       this.addEventListener("load", () => {
         try {
-          onResponse(this.__feedbeatUrl, this.status, () => {
-            if (this.responseType === "" || this.responseType === "text") return this.responseText;
-            if (this.responseType === "json") return JSON.stringify(this.response);
-            return null;
-          });
+          onResponse(
+            this.__feedbeatUrl,
+            this.status,
+            () => {
+              if (this.responseType === "" || this.responseType === "text") return this.responseText;
+              if (this.responseType === "json") return JSON.stringify(this.response);
+              return null;
+            },
+            (name) => this.getResponseHeader(name),
+          );
         } catch {
           // Never break X.
         }

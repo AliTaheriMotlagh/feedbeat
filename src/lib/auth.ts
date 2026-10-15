@@ -15,6 +15,9 @@ const trustedOrigins = [env.BETTER_AUTH_URL, site.url, process.env.VERCEL_URL, p
   .filter((o): o is string => Boolean(o))
   .map((o) => (o.startsWith("http") ? o : `https://${o}`));
 
+// `next dev` moves to another port when 3000 is taken, and sign-in is refused ("Invalid origin") from any origin not listed here.
+if (env.NODE_ENV !== "production") trustedOrigins.push("http://localhost:*", "http://127.0.0.1:*");
+
 const createAuth = () =>
   betterAuth({
     appName: site.name,

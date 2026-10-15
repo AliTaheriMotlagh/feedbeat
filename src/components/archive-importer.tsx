@@ -252,8 +252,15 @@ export function ArchiveImporter() {
         ) : (
           <>
             <FileArchive className="size-10 text-primary" />
-            <p className="mt-4 font-display text-xl font-bold">Drop your X archive (.zip) here</p>
-            <p className="mt-1 text-sm text-muted-foreground">or click to choose · you can also drop data/tweets.js + data/account.js</p>
+            <p className="mt-4 font-display text-xl font-bold">
+              <span className="hidden sm:inline">Drop your X archive (.zip) here</span>
+              <span className="sm:hidden">Choose your X archive (.zip)</span>
+            </p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              <span className="hidden sm:inline">or click to choose · you can also drop </span>
+              <span className="sm:hidden">You can also choose </span>
+              data/tweets.js + data/account.js
+            </p>
             <p className="mt-4 inline-flex items-center gap-1.5 text-xs text-muted-foreground">
               <CheckCircle2 className="size-3.5 text-emerald-500" /> Processed locally — nothing is uploaded until you say so
             </p>

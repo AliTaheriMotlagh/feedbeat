@@ -6,13 +6,24 @@
   "minimum_chrome_version": "111",
   "icons": { "16": "icons/icon16.png", "32": "icons/icon32.png", "48": "icons/icon48.png", "128": "icons/icon128.png" },
   "permissions": ["alarms", "cookies", "declarativeNetRequestWithHostAccess", "storage", "unlimitedStorage"],
-  "host_permissions": ["https://x.com/*", "https://feedbeat-nine.vercel.app/*", "http://localhost:3000/*"],
+  "host_permissions": [
+    "https://x.com/*",
+    "https://feedbeat-free.vercel.app/*",
+    "https://feedbeat-nine.vercel.app/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
+  ],
   "background": { "service_worker": "background.js" },
   "content_scripts": [
     { "matches": ["https://x.com/*"], "js": ["hook.js"], "run_at": "document_start", "world": "MAIN", "all_frames": true },
     { "matches": ["https://x.com/*"], "js": ["lib.js", "collect.js"], "run_at": "document_idle", "all_frames": true },
     {
-      "matches": ["https://feedbeat-nine.vercel.app/import/extension*", "http://localhost:3000/import/extension*"],
+      "matches": [
+        "https://feedbeat-free.vercel.app/import/extension*",
+        "https://feedbeat-nine.vercel.app/import/extension*",
+        "http://localhost/import/extension*",
+        "http://127.0.0.1/import/extension*"
+      ],
       "js": ["lib.js", "bridge.js"],
       "run_at": "document_idle"
     }

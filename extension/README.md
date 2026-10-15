@@ -28,11 +28,19 @@ Scans the signed-in user's own X posts for music links and hands them to Feedbea
 - `storage`, `unlimitedStorage`: keep scan progress so it can continue later.
 - `alarms`: resume after X's rate-limit window.
 - `declarativeNetRequestWithHostAccess`: let x.com load in the Feedbeat page's iframe, only in the tab running a scan and only while it runs.
-- Feedbeat origin: the bridge on `/import/extension`.
+- The Feedbeat site (next section): the bridge on `/import/extension`.
+
+## Which sites it runs on
+
+`manifest.json` is the only list. `bridge.js` is injected on exactly the pages its `content_scripts` entry matches, and the service worker only answers those pages (`lib.js` reads the same list at runtime, so there is no second copy to forget). Today that is the production site (`feedbeat-free.vercel.app`, plus the old `feedbeat-nine` name, which redirects to it) and `localhost` / `127.0.0.1` on **any port** for development.
+
+- **Moving the site to another domain:** add it to both `host_permissions` and the bridge's `matches`, bump `version`, publish the update. An extension that doesn't list the site's address never loads the bridge there, and the page can only say "Feedbeat Collector not found" (that is what happened when the site moved from `feedbeat-nine` to `feedbeat-free`).
+- After a scan the extension brings you back to the site that started it (it remembers the last site that used it), not to a fixed address.
+- `npm run ext:pack` drops the localhost entries and fails if no https site is left. `src/lib/extension-lib.test.ts` checks that the production host and dev ports are covered.
 
 ## Develop
 
-`chrome://extensions` → Developer mode → **Load unpacked** → this folder. `npm run dev` serves the site on `http://localhost:3000`, which the dev manifest allows.
+`chrome://extensions` → Developer mode → **Load unpacked** → this folder. Run `npm run dev`: the site works on `localhost` and `127.0.0.1` at any port (Next moves to 3001, 3002… when 3000 is busy). Reloading the extension cuts the `/import/extension` tabs that are already open off from it, so reload those tabs too.
 
 ## Release
 

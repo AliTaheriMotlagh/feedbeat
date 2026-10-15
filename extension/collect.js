@@ -17,22 +17,35 @@
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   const IDLE_ROUNDS = 8; // rounds without new posts before a page counts as finished
+  const EMPTY_GRACE = 3; // ...but after an empty page (how X ends a timeline) only this many more
   const OLDER_ENOUGH = 3; // posts older than the newest one we have before a "new" scan stops
   const REPORT_EVERY = 3000; // ms; also how fast a pause from the site is noticed
   const RETRY_DELAYS = [15, 30, 60, 120].map((s) => s * 1000);
-  const COOLDOWN = 15 * 60 * 1000; // X's rate-limit window
+  const COOLDOWN = 15 * 60 * 1000; // X's rate-limit window, the longest we wait
+  const MIN_COOLDOWN = 15 * 1000;
+  const RESET_SLACK = 5 * 1000; // past the moment X says its window resets
   const NAV_KEY = "feedbeat:nav";
   const BLANK_KEY = "feedbeat:blank";
 
   let running = false;
   const hookBodies = [];
   let rateLimited = false;
+  let resetAt = null; // when X said the rate-limit window resets (ms), if it said
 
   window.addEventListener("message", (e) => {
     if (e.source !== window || e.data?.source !== "feedbeat-hook" || !running) return;
     if (e.data.type === "data") hookBodies.push(e.data.body);
-    if (e.data.type === "ratelimit") rateLimited = true;
+    if (e.data.type === "ratelimit") {
+      rateLimited = true;
+      resetAt = Number(e.data.reset) * 1000 || null;
+    }
   });
+
+  /** How long to wait after X says "slow down": until its window resets when it says when, never longer than the usual 15 minutes. */
+  function cooldownMs() {
+    if (!resetAt) return COOLDOWN;
+    return Math.min(COOLDOWN, Math.max(resetAt - Date.now() + RESET_SLACK, MIN_COOLDOWN));
+  }
 
   /* ------------------------------- Page reads ------------------------------ */
 
@@ -86,9 +99,13 @@
     return tweets;
   }
 
-  /** Posts from X's own timeline data, captured by hook.js. */
-  function tweetsFromHook(accountId, onProfile) {
+  /**
+   * Posts from X's own timeline data, captured by hook.js. `lastEmpty` says whether the latest response
+   * had no posts at all (null when none arrived): X ends a timeline with a page of nothing but cursors.
+   */
+  function readHook(accountId, onProfile) {
     const tweets = [];
+    let lastEmpty = null;
     for (const body of hookBodies.splice(0)) {
       let json;
       try {
@@ -99,8 +116,9 @@
       const res = L.tweetsFromGraphql(json, accountId);
       tweets.push(...res.tweets);
       if (res.profile) onProfile(res.profile);
+      lastEmpty = L.hasNoPosts(json);
     }
-    return tweets;
+    return { tweets, lastEmpty };
   }
 
   async function waitFor(fn, timeout) {
@@ -180,6 +198,7 @@
     let pending = [];
     let profile = null;
     let idle = 0;
+    let emptyPage = false; // the latest timeline response had no posts: the end, unless more follows right away
     let retries = 0;
     let lastReport = 0;
     let hiddenWarned = false;
@@ -194,7 +213,9 @@
         continue;
       }
 
-      const found = [...tweetsFromHook(scan.accountId, (p) => (profile = p)), ...tweetsFromDom(handle)];
+      const hooked = readHook(scan.accountId, (p) => (profile = p));
+      if (hooked.lastEmpty !== null) emptyPage = hooked.lastEmpty;
+      const found = [...hooked.tweets, ...tweetsFromDom(handle)];
       let grew = false;
       for (const t of found) {
         if (t.pinned) pinnedIds.add(t.tweetId);
@@ -208,6 +229,8 @@
         }
       }
       idle = grew ? 0 : idle + 1;
+      // X ends a timeline with a page of nothing but cursors: a few quiet rounds after that are enough, not the full wait.
+      if (emptyPage && !grew) idle = Math.max(idle, IDLE_ROUNDS - EMPTY_GRACE);
 
       if (pending.length || profile || hiddenWarned || Date.now() - lastReport > REPORT_EVERY) {
         const res = await report({ tweets: pending, ...(profile && { profile }), ...(hiddenWarned && { message: null }) });
@@ -219,7 +242,7 @@
       }
 
       if (rateLimited) {
-        const resumeAt = Date.now() + COOLDOWN;
+        const resumeAt = Date.now() + cooldownMs();
         const at = new Date(resumeAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
         return report({ status: "cooldown", resumeAt, message: `X asked us to slow down. Continuing automatically at ${at}.` });
       }
