@@ -7,7 +7,7 @@ import { absoluteUrl, site } from "@/lib/site";
 
 export const metadata: Metadata = {
   title: "Turn your X archive into Spotify & YouTube playlists — free",
-  description: `Drop your free X (Twitter) data archive and ${site.name} finds every song you've ever posted, right in your browser. Publish playlists for Spotify, YouTube, Apple Music and more.`,
+  description: `Drop (or link) your free X (Twitter) data archive and ${site.name} finds every song you've ever posted, right in your browser. Publish playlists for Spotify, YouTube, Apple Music and more.`,
   alternates: { canonical: "/import" },
 };
 
@@ -16,7 +16,10 @@ const STEPS = [
     title: "Request your archive on X",
     body: "Settings → Your account → Download an archive of your data. X e-mails you when it's ready (usually within a day). It's free.",
   },
-  { title: "Drop the .zip here", body: "We open it in your browser and pick out only your posts. Nothing is uploaded yet." },
+  {
+    title: "Drop the .zip or paste a link",
+    body: "We open it in your browser and pick out only your posts. Hosted it on Dropbox or Google Drive? Paste the link instead.",
+  },
   { title: "Publish", body: "Review the songs we found, then publish. Only the music links go to our server." },
 ];
 

@@ -1,13 +1,16 @@
 "use client";
 
-import { CheckCircle2, FileArchive, Loader2, Lock, UploadCloud } from "lucide-react";
+import { CheckCircle2, FileArchive, Link2, Loader2, Lock, UploadCloud } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { useSession } from "@/lib/auth-client";
+import { normalizeArchiveUrl } from "@/lib/archive-url";
 import { PLATFORMS, type PlatformId } from "@/lib/platforms";
+import { openRemoteZip } from "@/lib/remote-zip";
 import { cn } from "@/lib/utils";
 import {
   extractAccount,
@@ -19,7 +22,7 @@ import {
   type ArchiveProfile,
   type ArchiveScan,
 } from "@/lib/x-archive";
-import { listZipEntries, readZipEntryText } from "@/lib/zip-reader";
+import { listZipEntries, readZipEntryText, type ZipSource } from "@/lib/zip-reader";
 import { useAuthPrompt } from "./auth-prompt";
 import { Avatar } from "./avatar";
 import { PlatformIcon } from "./platform-icon";
@@ -33,23 +36,31 @@ type State =
   | { step: "uploading"; account: ArchiveAccount; done: number; total: number }
   | { step: "error"; message: string };
 
-const tick = () => new Promise((r) => setTimeout(r, 0));
+type ArchiveText = { kind: "tweets" | "account" | "profile"; text: string };
 
-/** Collect the text of tweets/account/profile data files from a .zip or loose .js files. */
-async function readArchive(files: File[], onProgress: (m: string) => void) {
-  const texts: { kind: "tweets" | "account" | "profile"; text: string }[] = [];
+const tick = () => new Promise((r) => setTimeout(r, 0));
+const mb = (bytes: number) => `${(bytes / 1_000_000).toFixed(1)} MB`;
+
+/** Collect the text of the tweets/account/profile data files inside a zip. */
+async function readZip(zip: Blob | ZipSource, texts: ArchiveText[], onProgress: (m: string) => void) {
+  if (typeof DecompressionStream === "undefined") throw new Error("Your browser is too old to open zip files. Unzip the archive and drop the data/*.js files instead.");
+  const entries = await listZipEntries(zip);
+  for (const entry of entries) {
+    const kind = isNeededArchiveFile(entry.name);
+    if (!kind) continue;
+    onProgress(`Reading ${entry.name}…`);
+    texts.push({ kind, text: await readZipEntryText(zip, entry) });
+    await tick();
+  }
+}
+
+/** From a dropped .zip or loose .js files. */
+async function readFiles(files: File[], onProgress: (m: string) => void) {
+  const texts: ArchiveText[] = [];
   for (const file of files) {
     if (/\.zip$/i.test(file.name)) {
-      if (typeof DecompressionStream === "undefined") throw new Error("Your browser is too old to open zip files. Unzip the archive and drop the data/*.js files instead.");
       onProgress(`Opening ${file.name}…`);
-      const entries = await listZipEntries(file);
-      for (const entry of entries) {
-        const kind = isNeededArchiveFile(entry.name);
-        if (!kind) continue;
-        onProgress(`Reading ${entry.name}…`);
-        texts.push({ kind, text: await readZipEntryText(file, entry) });
-        await tick();
-      }
+      await readZip(file, texts, onProgress);
     } else {
       const kind = isNeededArchiveFile(file.name);
       if (kind) texts.push({ kind, text: await file.text() });
@@ -58,9 +69,30 @@ async function readArchive(files: File[], onProgress: (m: string) => void) {
   return texts;
 }
 
+/** From a link, downloading only the zip directory and the data files we need. */
+async function readLink(url: string, onProgress: (m: string) => void) {
+  let label = "Opening link…";
+  let loaded = 0;
+  const report = () => onProgress(loaded ? `${label} · ${mb(loaded)} downloaded` : label);
+  report();
+  const zip = await openRemoteZip(url, (n) => {
+    loaded = n;
+    report();
+  });
+  label = `Opening ${mb(zip.size)} archive…`;
+  report();
+  const texts: ArchiveText[] = [];
+  await readZip(zip, texts, (m) => {
+    label = m;
+    report();
+  });
+  return texts;
+}
+
 export function ArchiveImporter() {
   const [state, setState] = useState<State>({ step: "idle" });
   const [dragging, setDragging] = useState(false);
+  const [link, setLink] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const { data: session } = useSession();
   const prompt = useAuthPrompt();
@@ -68,10 +100,25 @@ export function ArchiveImporter() {
 
   async function handleFiles(list: FileList | null) {
     const files = [...(list ?? [])];
-    if (!files.length) return;
+    if (files.length) await load((onProgress) => readFiles(files, onProgress));
+  }
+
+  async function handleLink(e: React.FormEvent) {
+    e.preventDefault();
+    let url: string;
+    try {
+      url = normalizeArchiveUrl(link);
+    } catch (err) {
+      return setState({ step: "error", message: err instanceof Error ? err.message : "Invalid link." });
+    }
+    if (!session) return prompt("Sign in to import from a link. We fetch only your posts — not your media — and read them in your browser.");
+    await load((onProgress) => readLink(url, onProgress));
+  }
+
+  async function load(read: (onProgress: (m: string) => void) => Promise<ArchiveText[]>) {
     try {
       setState({ step: "reading", message: "Reading your archive…" });
-      const texts = await readArchive(files, (message) => setState({ step: "reading", message }));
+      const texts = await read((message) => setState({ step: "reading", message }));
 
       const accountText = texts.find((t) => t.kind === "account");
       const tweetTexts = texts.filter((t) => t.kind === "tweets");
@@ -235,6 +282,31 @@ export function ArchiveImporter() {
           }}
         />
       </div>
+      <form onSubmit={handleLink} className="mt-4 flex flex-col gap-2 sm:flex-row">
+        <label htmlFor="archive-link" className="sr-only">
+          Link to your X archive .zip
+        </label>
+        <div className="relative flex-1">
+          <Link2 className="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            id="archive-link"
+            type="url"
+            inputMode="url"
+            placeholder="…or paste a link to the .zip (Dropbox, Google Drive, direct URL)"
+            value={link}
+            onChange={(e) => setLink(e.target.value)}
+            disabled={state.step === "reading"}
+            className="h-11 pl-10"
+          />
+        </div>
+        <Button type="submit" size="lg" variant="outline" disabled={!link.trim() || state.step === "reading"}>
+          Import from link
+        </Button>
+      </form>
+      <p className="mt-2 text-xs text-muted-foreground">
+        The link must be public (e.g. Google Drive “Anyone with the link”). We download only the zip index and your posts/account files —
+        never your media — and read them in your browser. Nothing is stored.
+      </p>
       {state.step === "error" && (
         <p role="alert" className="mt-4 rounded-2xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
           {state.message}
