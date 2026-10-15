@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { useSession } from "@/lib/auth-client";
 import { normalizeArchiveUrl } from "@/lib/archive-url";
+import { publishImport } from "@/lib/import-client";
 import { PLATFORMS, type PlatformId } from "@/lib/platforms";
 import { openRemoteZip } from "@/lib/remote-zip";
 import { cn } from "@/lib/utils";
@@ -26,8 +27,6 @@ import { listZipEntries, readZipEntryText, type ZipSource } from "@/lib/zip-read
 import { useAuthPrompt } from "./auth-prompt";
 import { Avatar } from "./avatar";
 import { PlatformIcon } from "./platform-icon";
-
-const CHUNK = 100;
 
 type State =
   | { step: "idle" }
@@ -142,21 +141,11 @@ export function ArchiveImporter() {
   async function publish(account: ArchiveAccount, profile: ArchiveProfile, scan: ArchiveScan) {
     if (!session) return prompt("Sign in to publish your playlists and earn XP.");
 
-    const post = async (body: unknown) => {
-      const res = await fetch("/api/import", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error ?? "Upload failed.");
-      return data;
-    };
-
     try {
       setState({ step: "uploading", account, done: 0, total: scan.items.length });
-      const { profileId } = (await post({ phase: "start", account, profile, tweetsScanned: scan.tweetsScanned })) as { profileId: string };
-      for (let i = 0; i < scan.items.length; i += CHUNK) {
-        await post({ phase: "chunk", profileId, items: scan.items.slice(i, i + CHUNK) });
-        setState({ step: "uploading", account, done: Math.min(i + CHUNK, scan.items.length), total: scan.items.length });
-      }
-      const { handle, total } = (await post({ phase: "finish", profileId })) as { handle: string; total: number };
+      const { handle, total } = await publishImport({ account, profile, tweetsScanned: scan.tweetsScanned, items: scan.items }, (done, all) =>
+        setState({ step: "uploading", account, done, total: all }),
+      );
       toast.success(`Published ${total} songs 🎉`);
       router.push(`/u/${handle}`);
     } catch (err) {

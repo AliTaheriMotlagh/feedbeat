@@ -55,6 +55,13 @@ export default function ImportPage() {
       <div className="mt-10">
         <ArchiveImporter />
       </div>
+      <p className="mt-4 text-sm text-muted-foreground">
+        Don&apos;t want to unzip anything? Use the{" "}
+        <a href="/import/extension" className="font-medium text-primary hover:underline">
+          Feedbeat Collector extension
+        </a>{" "}
+        on your own X profile instead.
+      </p>
 
       <JsonLd<HowTo>
         data={{
