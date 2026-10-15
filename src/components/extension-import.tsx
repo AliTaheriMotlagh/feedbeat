@@ -2,7 +2,7 @@
 
 import { AlertTriangle, CheckCircle2, ExternalLink, History, Link2, Loader2, Lock, Pause, Play, Puzzle, RefreshCw, RotateCcw, UploadCloud } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -31,9 +31,11 @@ export function ExtensionImport() {
   const [error, setError] = useState<string | null>(null);
   const [upload, setUpload] = useState<Upload>(null);
   const now = useNow(5_000);
-  const { data: session } = useSession();
+  const { data: session, isPending: sessionPending } = useSession();
   const prompt = useAuthPrompt();
   const router = useRouter();
+  const lastStatus = useRef(scan?.status);
+  const wantPublish = useRef(false);
 
   async function run(type: string, payload?: unknown) {
     setBusy(true);
@@ -48,7 +50,8 @@ export function ExtensionImport() {
     }
   }
 
-  const start = (kind: StartKind, target: StartTarget = "frame") => run("start", { kind, target });
+  // An X tab by default: inside a frame X often can't see its sign-in and stops loading when scrolled out of view.
+  const start = (kind: StartKind, target: StartTarget = "tab") => run("start", { kind, target });
 
   async function publish() {
     if (!session) return prompt("Sign in to publish your playlists and earn XP.");
@@ -66,6 +69,27 @@ export function ExtensionImport() {
       setError(err instanceof Error ? err.message : "Upload failed.");
     }
   }
+
+  // A scan that finishes while this page is open imports its songs right away.
+  const publishIfWanted = useEffectEvent(() => {
+    if (!wantPublish.current || sessionPending || busy || upload) return;
+    wantPublish.current = false;
+    if (scan?.status === "done" && scan.unpublished > 0) queueMicrotask(() => void publish());
+  });
+
+  useEffect(() => {
+    if (lastStatus.current === "running" && scan?.status === "done") wantPublish.current = true;
+    lastStatus.current = scan?.status;
+    publishIfWanted();
+  }, [scan?.status, sessionPending]);
+
+  // The extension opens this page with ?publish when a scan started from its popup finishes.
+  useEffect(() => {
+    if (status !== "ready" || !new URLSearchParams(window.location.search).has("publish")) return;
+    window.history.replaceState(null, "", window.location.pathname);
+    wantPublish.current = true;
+    publishIfWanted();
+  }, [status]);
 
   if (status === "detecting") {
     return <p className="mt-10 text-center text-sm text-muted-foreground">Looking for the Feedbeat Collector extension…</p>;
@@ -140,7 +164,7 @@ export function ExtensionImport() {
         <Alert>
           {inFrame ? "X isn't loading inside this page." : "Your X tab hasn't started yet."}{" "}
           <button className="font-semibold text-primary hover:underline" disabled={busy} onClick={() => start("continue", "tab")}>
-            Scan in an X tab instead
+            {inFrame ? "Scan in an X tab instead" : "Open it again"}
           </button>
         </Alert>
       )}
@@ -173,10 +197,11 @@ export function ExtensionImport() {
       </div>
       {fresh && signedIn && (
         <p className="mt-3 text-sm text-muted-foreground">
-          Prefer your own X tab?{" "}
-          <button className="font-medium text-primary hover:underline" disabled={busy} onClick={() => start("continue", "tab")}>
-            Scan in an X tab
-          </button>
+          Rather stay on this page?{" "}
+          <button className="font-medium text-primary hover:underline" disabled={busy} onClick={() => start("continue", "frame")}>
+            Scan inside it
+          </button>{" "}
+          (doesn&apos;t work in every browser)
         </p>
       )}
 
@@ -184,7 +209,7 @@ export function ExtensionImport() {
       {active && !inFrame && (
         <p className="mt-5 flex items-center gap-2 rounded-2xl bg-muted p-4 text-sm">
           <ExternalLink className="size-4 shrink-0" />
-          Scanning in your X tab. Keep it in front; this page follows along and you can pause from here.
+          Scanning in your X tab. Keep it in front; when it&apos;s done you&apos;re brought back here and your songs are imported.
         </p>
       )}
 
@@ -265,9 +290,9 @@ function Intro({ signedIn }: { signedIn: boolean }) {
     <>
       <p className="font-display text-2xl font-bold">Find every song you&apos;ve posted on X</p>
       <ol className="mt-4 space-y-2 text-sm text-muted-foreground">
-        <li>1. X opens right here and scrolls through your posts with links, newest first, back to your very first post.</li>
-        <li>2. Keep this tab in front while it works. Songs show up as they&apos;re found.</li>
-        <li>3. Pause or close it any time: it continues where it stopped. Publish whenever you like.</li>
+        <li>1. X opens in a new tab and scrolls through your posts, newest first, then searches back to your very first post.</li>
+        <li>2. Keep that tab in front while it works. Songs show up here as they&apos;re found.</li>
+        <li>3. When it&apos;s done you&apos;re brought back here and the songs are imported. Pause any time; it continues where it stopped.</li>
       </ol>
       {!signedIn && (
         <Alert>
@@ -322,7 +347,9 @@ function describe(scan: ScanSummary): string {
       if (!scan.handle) return "Opening X…";
       return scan.mode === "new"
         ? "Looking for posts newer than your last scan…"
-        : scan.oldest
+        : scan.phase === "profile"
+          ? `Scrolling your profile${scan.oldest ? `, at ${month(scan.oldest)}` : ""}…`
+          : scan.oldest
           ? `Reading your posts from ${month(scan.oldest)} and earlier…`
           : "Reading your latest posts…";
     case "cooldown":

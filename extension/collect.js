@@ -1,10 +1,14 @@
 /*
  * Content script for x.com (tabs and the iframe on the Feedbeat page). Does
- * nothing unless the service worker says this page is running a scan. Then it reads the signed-in account's posts with
- * X search ("from:you filter:links"), latest first, one date window at a time:
- * X stops serving a search after a few hundred results, so when a window runs
- * dry it reloads the search ending at the oldest day reached. Progress goes to
- * the worker after every few posts, so a scan can stop anywhere and continue.
+ * nothing unless the service worker says this page is running a scan. Then it
+ * scrolls the signed-in account's posts, newest first:
+ *  1. the profile timeline (posts and replies). X lists every post there, but
+ *     only the latest ~3,200, and search leaves posts out for some accounts;
+ *  2. for older posts, X search ("from:you filter:links"), one date window at a
+ *     time: X stops serving a search after a few hundred results, so when a
+ *     window runs dry it reloads the search ending at the oldest day reached.
+ * Progress goes to the worker after every few posts, so a scan can stop
+ * anywhere and continue.
  */
 (function () {
   "use strict";
@@ -12,7 +16,8 @@
   const L = globalThis.FeedbeatLib;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-  const IDLE_ROUNDS = 8; // rounds without new posts before a window counts as finished
+  const IDLE_ROUNDS = 8; // rounds without new posts before a page counts as finished
+  const OLDER_ENOUGH = 3; // posts older than the newest one we have before a "new" scan stops
   const REPORT_EVERY = 3000; // ms; also how fast a pause from the site is noticed
   const RETRY_DELAYS = [15, 30, 60, 120].map((s) => s * 1000);
   const COOLDOWN = 15 * 60 * 1000; // X's rate-limit window
@@ -60,6 +65,9 @@
       // Reposts and ads point at someone else's status.
       if (!m || !time.getAttribute("datetime")) continue;
 
+      // "Pinned" is a social context without a link; "… reposted" links to the reposter.
+      const context = article.querySelector('[data-testid="socialContext"]');
+      const pinned = !!context && !context.closest("a[href]") && !context.querySelector("a[href]");
       const text = article.querySelector('[data-testid="tweetText"]')?.innerText ?? "";
       const visible = quote ? article.innerText.replace(quote.innerText, "") : article.innerText;
       const urls = L.musicUrlsInText(visible);
@@ -71,7 +79,9 @@
           if (url && L.isMusicUrl(url)) urls.push(url);
         }
       }
-      tweets.push({ tweetId: m[1], tweetedAt: new Date(time.getAttribute("datetime")).toISOString(), text, urls });
+      const tweet = { tweetId: m[1], tweetedAt: new Date(time.getAttribute("datetime")).toISOString(), text, urls };
+      if (pinned) tweet.pinned = true;
+      tweets.push(tweet);
     }
     return tweets;
   }
@@ -116,10 +126,11 @@
 
   /* --------------------------------- Scan ---------------------------------- */
 
-  function sameSearch(a, b) {
+  function samePage(a, b) {
     try {
       const [x, y] = [new URL(a), new URL(b)];
-      return x.pathname === y.pathname && x.searchParams.get("q") === y.searchParams.get("q") && x.searchParams.get("f") === y.searchParams.get("f");
+      const same = (k) => x.searchParams.get(k) === y.searchParams.get(k);
+      return x.pathname.toLowerCase() === y.pathname.toLowerCase() && same("q") && same("f");
     } catch {
       return false;
     }
@@ -128,7 +139,7 @@
   /** Go to `url`, unless we've been bounced away from it a few times already. */
   function navigate(url) {
     const tries = sessionStorage.getItem(NAV_KEY) === url ? 1 : 0;
-    if (tries) throw new Error("X didn't open the search page. Check that X works in this browser, then press Continue.");
+    if (tries) throw new Error("X didn't open your posts. Check that X works in this browser, then press Continue.");
     sessionStorage.setItem(NAV_KEY, url);
     location.assign(url);
   }
@@ -154,16 +165,18 @@
     }
     if (!scan.handle) await report({ handle });
 
-    // 2. Open this window's search page.
-    const expected = L.searchUrl(handle, { until: scan.until, since: scan.since });
-    if (!sameSearch(location.href, expected)) return navigate(expected);
+    // 2. Open this run's page: the profile timeline, or a search window for older posts.
+    const onProfile = L.onProfile(scan);
+    const expected = onProfile ? L.profileUrl(handle) : L.searchUrl(handle, { until: scan.until, since: scan.since });
+    if (!samePage(location.href, expected)) return navigate(expected);
     sessionStorage.removeItem(NAV_KEY);
 
-    // 3. Scroll until the window runs dry, sending progress as we go.
+    // 3. Scroll until the page runs dry, sending progress as we go.
     window.postMessage({ source: "feedbeat-cs", type: "flush" }, window.location.origin);
     const seen = new Set(scan.seen);
     const windowIds = new Set();
-    let oldest = null;
+    const dates = new Map(); // post id → date, for this page
+    const pinnedIds = new Set();
     let pending = [];
     let profile = null;
     let idle = 0;
@@ -184,10 +197,11 @@
       const found = [...tweetsFromHook(scan.accountId, (p) => (profile = p)), ...tweetsFromDom(handle)];
       let grew = false;
       for (const t of found) {
+        if (t.pinned) pinnedIds.add(t.tweetId);
         if (windowIds.has(t.tweetId)) continue;
         windowIds.add(t.tweetId);
+        dates.set(t.tweetId, t.tweetedAt);
         grew = true;
-        if (!oldest || t.tweetedAt < oldest) oldest = t.tweetedAt;
         if (!seen.has(t.tweetId)) {
           seen.add(t.tweetId);
           pending.push(t);
@@ -225,27 +239,58 @@
 
       if (windowIds.size === 0 && isEmpty()) break;
       if (idle >= IDLE_ROUNDS && !isLoading()) break;
+      // A "new" scan is done once it is past the newest post collected before.
+      if (scan.mode === "new" && countOlder(dates, pinnedIds, scan.newest) >= OLDER_ENOUGH) break;
 
+      // Scrolling to where we already are fires no scroll event and X wouldn't load more, so back up a little first.
+      if (idle > 0) {
+        window.scrollBy(0, -800);
+        await sleep(300);
+      }
       window.scrollTo(0, document.documentElement.scrollHeight);
       await sleep(900 + Math.random() * 700);
     }
 
-    // 4. Window done: either we reached the first post, or load the next window.
+    // 4. Page done. A "new" scan is finished; the profile pass hands over to search; a search loads the next window.
     if (windowIds.size === 0 && !isEmpty() && sessionStorage.getItem(BLANK_KEY) !== location.href) {
       // Nothing loaded and no "no results" either: give X one more try before calling it done.
       sessionStorage.setItem(BLANK_KEY, location.href);
       return location.reload();
     }
     sessionStorage.removeItem(BLANK_KEY);
+    const oldest = oldestOf(dates, pinnedIds);
+    if (scan.mode === "new") return report({ status: "done", tweets: pending, message: "You're up to date." });
+    if (onProfile) {
+      // Search on from the day of the oldest post the profile showed (that day is re-read, duplicates are skipped).
+      const until = oldest ? L.nextUntil(oldest, null) : null;
+      const res = await report({ tweets: pending, phase: "search", until });
+      if (!res.stop) navigate(L.searchUrl(handle, { until }));
+      return;
+    }
     if (windowIds.size === 0) {
       return report({ status: "done", tweets: pending, message: scan.mode === "all" ? "Reached your first post." : "You're up to date." });
     }
+    if (!oldest) return report({ status: "done", tweets: pending, message: "Reached your first post." });
     const until = L.nextUntil(oldest, scan.until);
     if (scan.since && until <= scan.since) {
       return report({ status: "done", tweets: pending, message: "You're up to date." });
     }
     const res = await report({ tweets: pending, until });
     if (!res.stop) navigate(L.searchUrl(handle, { until, since: scan.since }));
+  }
+
+  /** The oldest post on this page, leaving out the pinned one. */
+  function oldestOf(dates, pinnedIds) {
+    let oldest = null;
+    for (const [id, at] of dates) if (!pinnedIds.has(id) && (!oldest || at < oldest)) oldest = at;
+    return oldest;
+  }
+
+  function countOlder(dates, pinnedIds, than) {
+    if (!than) return 0;
+    let n = 0;
+    for (const [id, at] of dates) if (!pinnedIds.has(id) && at < than) n++;
+    return n;
   }
 
   async function init() {

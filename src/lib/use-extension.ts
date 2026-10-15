@@ -8,6 +8,8 @@ export interface ScanSummary {
   handle: string | null;
   status: "idle" | "running" | "cooldown" | "paused" | "done" | "error";
   mode: "all" | "new";
+  /** History pass: the profile timeline first, then search for older posts. */
+  phase?: "profile" | "search";
   message: string | null;
   scanned: number;
   songs: number;

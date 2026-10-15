@@ -70,8 +70,9 @@ async function start(kind, where) {
     } else if (!resumable) {
       // A finished history only has newer posts left to find.
       if (s.complete && s.newest) Object.assign(s, { mode: "new", since: L.dayOf(s.newest), until: null });
-      // Otherwise re-read the oldest day reached; posts already seen are skipped.
-      else Object.assign(s, { mode: "all", since: null, until: s.oldest ? L.addDays(L.dayOf(s.oldest), 1) : null });
+      // An unfinished profile pass starts again at the top; a search re-reads the oldest day reached. Posts already seen are skipped.
+      else if (s.phase === "profile") Object.assign(s, { mode: "all", since: null, until: null });
+      else Object.assign(s, { mode: "all", phase: "search", since: null, until: s.oldest ? L.addDays(L.dayOf(s.oldest), 1) : null });
     }
     return Object.assign(s, {
       status: "running",
@@ -176,8 +177,8 @@ async function whoami(sender) {
   const scan = await read();
   if (!scan || scan.status !== "running" || !isTarget(scan, sender)) return { run: false };
   if (!scan.attached) await update((s) => (s?.runId === scan.runId ? Object.assign(s, { attached: true }) : undefined));
-  const { runId, accountId, handle, mode, since, until, seen, target } = scan;
-  return { run: true, scan: { runId, accountId, handle, mode, since, until, seen, inFrame: target === "frame" } };
+  const { runId, accountId, handle, mode, phase, since, until, newest, seen, target } = scan;
+  return { run: true, scan: { runId, accountId, handle, mode, phase, since, until, newest, seen, inFrame: target === "frame" } };
 }
 
 /** Progress from the X page. Returns stop: true once the scan was paused or replaced. */
@@ -189,6 +190,7 @@ async function progress(sender, patch) {
     if (patch.profile?.username?.toLowerCase() === s.handle?.toLowerCase()) s.profile = patch.profile;
     if (patch.tweets?.length) L.mergeTweets(s, patch.tweets);
     if ("until" in patch) s.until = patch.until;
+    if (patch.phase) s.phase = patch.phase;
     if ("message" in patch) s.message = patch.message;
     if (patch.status) {
       s.status = patch.status;
@@ -213,7 +215,8 @@ async function onFinished(scan) {
     await chrome.tabs.update(back.id, { active: true });
     await chrome.windows.update(back.windowId, { focused: true });
   } else {
-    await chrome.tabs.create({ url: `${L.SITE_URL}${IMPORT_PATH}` });
+    // ?publish: the page imports the songs as soon as it opens.
+    await chrome.tabs.create({ url: `${L.SITE_URL}${IMPORT_PATH}?publish` });
   }
 }
 

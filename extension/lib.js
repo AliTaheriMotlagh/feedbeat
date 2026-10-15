@@ -150,7 +150,7 @@
       };
     }
 
-    function readTweet(t) {
+    function readTweet(t, pinned) {
       const legacy = t.legacy;
       const id = t.rest_id ?? legacy.id_str;
       if (legacy.user_id_str !== accountId || !/^\d{1,25}$/.test(id ?? "")) return;
@@ -162,22 +162,26 @@
       const text = note?.text ?? legacy.full_text ?? "";
       const entityUrls = [...(legacy.entities?.urls ?? []), ...(note?.entity_set?.urls ?? [])];
       const urls = entityUrls.map((u) => u?.expanded_url).filter((u) => typeof u === "string");
-      tweets.push({ tweetId: id, tweetedAt, text, urls: [...urls, ...musicUrlsInText(text)] });
+      const tweet = { tweetId: id, tweetedAt, text, urls: [...urls, ...musicUrlsInText(text)] };
+      if (pinned) tweet.pinned = true;
+      tweets.push(tweet);
     }
 
-    function walk(node, depth) {
+    // A profile's pinned post comes first whatever its date.
+    function walk(node, depth, pinned) {
       if (!isObj(node) || depth > 60 || visited.has(node)) return;
       visited.add(node);
       if (Array.isArray(node)) {
-        for (const child of node) walk(child, depth + 1);
+        for (const child of node) walk(child, depth + 1, pinned);
         return;
       }
+      pinned ||= node.type === "TimelinePinEntry";
       if (node.__typename === "User") readUser(node);
-      if (isObj(node.legacy) && typeof node.legacy.created_at === "string" && "full_text" in node.legacy) readTweet(node);
-      for (const key in node) walk(node[key], depth + 1);
+      if (isObj(node.legacy) && typeof node.legacy.created_at === "string" && "full_text" in node.legacy) readTweet(node, pinned);
+      for (const key in node) walk(node[key], depth + 1, pinned);
     }
 
-    walk(json, 0);
+    walk(json, 0, false);
     return { tweets, profile };
   }
 
@@ -205,9 +209,20 @@
     return `${X_ORIGIN}/search?q=${encodeURIComponent(q)}&src=typed_query&f=live`;
   }
 
-  /** Where a scan's X page should be: its search window, or home until the handle is known. */
+  /** The account's posts and replies, newest first. Unlike search, X lists every post here (the latest ~3,200). */
+  function profileUrl(handle) {
+    return `${X_ORIGIN}/${handle}/with_replies`;
+  }
+
+  /** New posts are always on the profile; the history pass reads it first, then searches further back. */
+  function onProfile(scan) {
+    return scan.mode === "new" || scan.phase === "profile";
+  }
+
+  /** Where a scan's X page should be: its profile or search window, or home until the handle is known. */
   function scanUrl(scan) {
-    return scan.handle ? searchUrl(scan.handle, { until: scan.until, since: scan.since }) : `${X_ORIGIN}/home`;
+    if (!scan.handle) return `${X_ORIGIN}/home`;
+    return onProfile(scan) ? profileUrl(scan.handle) : searchUrl(scan.handle, { until: scan.until, since: scan.since });
   }
 
   /**
@@ -236,6 +251,7 @@
       profile: null,
       status: "idle", // idle | running | cooldown | paused | done | error
       mode: "all", // all: back through history · new: only posts since the newest one we have
+      phase: "profile", // history pass: profile timeline first, then "search" windows for older posts
       message: null,
       runId: null,
       target: "tab", // tab: an X tab · frame: the iframe on the Feedbeat page
@@ -264,8 +280,11 @@
       if (seen.has(t.tweetId)) continue;
       seen.add(t.tweetId);
       scan.scanned++;
-      if (!scan.newest || t.tweetedAt > scan.newest) scan.newest = t.tweetedAt;
-      if (!scan.oldest || t.tweetedAt < scan.oldest) scan.oldest = t.tweetedAt;
+      // A pinned post is out of date order, so it doesn't mark how far the scan got.
+      if (!t.pinned) {
+        if (!scan.newest || t.tweetedAt > scan.newest) scan.newest = t.tweetedAt;
+        if (!scan.oldest || t.tweetedAt < scan.oldest) scan.oldest = t.tweetedAt;
+      }
       for (const url of dropTruncated(t.urls.filter(isMusicUrl))) {
         if (url.length > 2048) continue;
         const prev = byUrl.get(url);
@@ -296,6 +315,7 @@
       handle: scan.handle,
       status: scan.status,
       mode: scan.mode,
+      phase: scan.phase,
       message: scan.message,
       scanned: scan.scanned,
       songs: scan.items.length,
@@ -329,6 +349,8 @@
     dayOf,
     addDays,
     searchUrl,
+    profileUrl,
+    onProfile,
     scanUrl,
     nextUntil,
     newScan,

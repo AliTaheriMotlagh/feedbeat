@@ -7,8 +7,14 @@ interface Tweet {
   tweetedAt: string;
   text: string;
   urls: string[];
+  pinned?: boolean;
 }
 interface Scan {
+  handle: string | null;
+  mode: string;
+  phase: string;
+  until: string | null;
+  since: string | null;
   scanned: number;
   newest: string | null;
   oldest: string | null;
@@ -27,6 +33,7 @@ interface Lib {
   tweetsFromGraphql(json: unknown, accountId: string): { tweets: Tweet[]; profile: Record<string, string | null> | null };
   searchUrl(handle: string, opts?: { until?: string | null; since?: string | null }): string;
   nextUntil(oldestIso: string, prevUntil: string | null): string;
+  scanUrl(scan: Scan): string;
   newScan(accountId: string): Scan;
   mergeTweets(scan: Scan, tweets: Tweet[]): number;
   summarize(scan: Scan | null): { songs: number; unpublished: number; platforms: Record<string, number> } | null;
@@ -199,7 +206,49 @@ describe("extension search windows", () => {
   });
 });
 
+describe("extension scan pages", () => {
+  it("reads the profile first, then searches further back", () => {
+    const scan = Object.assign(lib.newScan("42"), { handle: "me" });
+    expect(lib.scanUrl(scan)).toBe("https://x.com/me/with_replies");
+    Object.assign(scan, { phase: "search", until: "2021-03-04" });
+    expect(new URL(lib.scanUrl(scan)).searchParams.get("q")).toBe("from:me filter:links until:2021-03-04");
+  });
+
+  it("looks for new posts on the profile", () => {
+    const scan = Object.assign(lib.newScan("42"), { handle: "me", mode: "new", phase: "search", since: "2021-03-04" });
+    expect(lib.scanUrl(scan)).toBe("https://x.com/me/with_replies");
+  });
+
+  it("marks the pinned post of a profile timeline", () => {
+    const tweet = (id: string) => ({
+      __typename: "Tweet",
+      rest_id: id,
+      legacy: { user_id_str: "42", created_at: "Wed Oct 10 20:19:24 +0000 2018", full_text: "hi", entities: { urls: [] } },
+    });
+    const json = {
+      instructions: [
+        { type: "TimelinePinEntry", entry: { content: { itemContent: { tweet_results: { result: tweet("1") } } } } },
+        { type: "TimelineAddEntries", entries: [{ content: { itemContent: { tweet_results: { result: tweet("2") } } } }] },
+      ],
+    };
+    const { tweets } = lib.tweetsFromGraphql(json, "42");
+    expect(tweets.map((t) => [t.tweetId, !!t.pinned])).toEqual([
+      ["1", true],
+      ["2", false],
+    ]);
+  });
+});
+
 describe("extension mergeTweets", () => {
+  it("doesn't let an old pinned post move how far the scan got", () => {
+    const scan = lib.newScan("42");
+    lib.mergeTweets(scan, [
+      { tweetId: "1", tweetedAt: "2015-01-01T00:00:00.000Z", text: "", urls: [], pinned: true },
+      { tweetId: "2", tweetedAt: "2024-01-01T00:00:00.000Z", text: "", urls: [] },
+    ]);
+    expect([scan.oldest, scan.newest, scan.scanned]).toEqual(["2024-01-01T00:00:00.000Z", "2024-01-01T00:00:00.000Z", 2]);
+  });
+
   it("counts each post once and keeps the earliest post per link", () => {
     const scan = lib.newScan("42");
     const song = "https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC";
